@@ -1,0 +1,37 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+*.egg
+
+# Environments
+.env
+.venv/
+venv/
+
+# MolPAL run outputs (regenerate on each machine)
+molpal/smoke_10k/
+molpal/molpal_10k/
+molpal/molpal_*/
+molpal/lightning_logs/
+molpal/chkpts/
+
+# Fingerprints: regenerate via scripts/prep_fps_serial.py (~22MB)
+molpal/libraries/*.h5
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Ray temp
+/tmp/ray/

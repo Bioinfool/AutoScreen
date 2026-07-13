@@ -1,0 +1,22 @@
+services:
+  molpal:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: autoscreeen/molpal:cpu
+    container_name: autoscreeen-molpal
+    working_dir: /workspace/molpal
+    volumes:
+      - ./molpal:/workspace/molpal
+      - molpal-runs:/workspace/molpal/runs
+      - molpal-ray:/tmp/ray
+    environment:
+      RAY_NUM_CPUS: "4"
+      RAY_NUM_GPUS: "0"
+    stdin_open: true
+    tty: true
+    command: bash
+
+volumes:
+  molpal-runs:
+  molpal-ray:
