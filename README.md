@@ -3,7 +3,7 @@
 面向自主实验平台的**多目标主动学习虚拟筛选**框架，基于开源 [MolPAL](https://github.com/coleygroup/molpal) 二次开发。
 
 **项目目的**：为实验室机器人药筛流程预先搭建一套完整、可即插即用的软件资产。当前用模拟后端跑通全部闭环，
-将来实验室机器人 / LIMS 平台就绪时，只需实现一个客户端接口即可直接接入，主动学习主循环无需改动。
+只需实现一个客户端接口即可直接接入，主动学习主循环无需改动。
 
 ## 在 MolPAL 之上做的功能扩展
 
@@ -63,7 +63,7 @@ molpal/                               # MolPAL 源码（代理基座）
 
 ## 接入真实机器人平台
 
-未来只需实现 `RobotClient`（参考 `autoscreen/robot_client.py` 里的 `HttpRobotClient` 桩与 JSON 契约），
+只需实现 `RobotClient`（参考 `autoscreen/robot_client.py` 里的 `HttpRobotClient` 桩与 JSON 契约），
 Campaign 代码不变：
 
 ```python
