@@ -1,13 +1,34 @@
-"""Precompute MolPAL fingerprint HDF5 without Ray (Windows-friendly)."""
+"""Precompute the Enamine10k fingerprint HDF5 (serial, no Ray/MolPAL deps).
+
+Reproduces MolPAL's default "pair" fingerprint (hashed atom-pair, radius 2,
+2048 bits) directly via RDKit, so the AutoScreen image stays lean and this runs
+on Windows without Ray's flaky parallel featurization.
+"""
 import csv
 import gzip
 from pathlib import Path
 
 import h5py
 import numpy as np
+import rdkit.Chem.rdMolDescriptors as rdmd
+from rdkit import Chem
+from rdkit.DataStructs import ConvertToNumpyArray
 from tqdm import tqdm
 
-from molpal.featurizer import Featurizer, featurize
+RADIUS = 2
+LENGTH = 2048
+
+
+def featurize(smi: str) -> np.ndarray | None:
+    mol = Chem.MolFromSmiles(smi)
+    if mol is None:
+        return None
+    fp = rdmd.GetHashedAtomPairFingerprintAsBitVect(
+        mol, minLength=1, maxLength=1 + RADIUS, nBits=LENGTH
+    )
+    x = np.empty(len(fp))
+    ConvertToNumpyArray(fp, x)
+    return x
 
 
 def load_smis(library: Path) -> list[str]:
@@ -22,7 +43,6 @@ def main() -> None:
     library = root / "libraries" / "Enamine10k.csv.gz"
     output = root / "libraries" / "Enamine10k.h5"
 
-    featurizer = Featurizer(fingerprint="pair", radius=2, length=2048)
     smis = load_smis(library)
     size = len(smis)
 
@@ -30,7 +50,7 @@ def main() -> None:
     fps_rows: list[np.ndarray] = []
 
     for idx, smi in enumerate(tqdm(smis, desc="Featurizing", unit="smi")):
-        fp = featurize(smi, featurizer.fingerprint, featurizer.radius, len(featurizer))
+        fp = featurize(smi)
         if fp is None:
             invalid_idxs.add(idx)
         else:
@@ -39,10 +59,7 @@ def main() -> None:
     valid_size = size - len(invalid_idxs)
     with h5py.File(output, "w") as h5f:
         dset = h5f.create_dataset(
-            "fps",
-            (valid_size, len(featurizer)),
-            chunks=(512, len(featurizer)),
-            dtype="int8",
+            "fps", (valid_size, LENGTH), chunks=(512, LENGTH), dtype="int8"
         )
         dset[:] = np.stack(fps_rows)
 

@@ -1,24 +1,31 @@
-FROM continuumio/miniconda3:24.1.2-0
+# Lean, CPU-only image for the AutoScreen pipeline.
+# AutoScreen has no MolPAL/TensorFlow/Ray runtime dependency; it only needs a
+# small scientific-Python stack, so the image stays small and builds reliably.
+FROM python:3.11-slim
 
 WORKDIR /workspace
-
-# CPU-only environment aligned with MolPAL CI (.github/test-env.yaml)
-COPY molpal/.github/test-env.yaml /tmp/test-env.yaml
-
-RUN conda env create -f /tmp/test-env.yaml \
-    && conda clean -afy
-
-ENV PATH=/opt/conda/envs/molpal-test/bin:$PATH
 ENV PYTHONUNBUFFERED=1
-ENV RAY_TMPDIR=/tmp/ray
+ENV PYTHONPATH=/workspace
 
-COPY docker/entrypoint.sh /entrypoint.sh
-RUN sed -i 's/\r$//' /entrypoint.sh && chmod +x /entrypoint.sh
+RUN pip install --no-cache-dir \
+    numpy \
+    scipy \
+    scikit-learn \
+    h5py \
+    pymoo \
+    rdkit \
+    tqdm
 
-COPY molpal /workspace/molpal
-WORKDIR /workspace/molpal
+# Project code
+COPY autoscreen /workspace/autoscreen
+COPY scripts /workspace/scripts
 
-RUN pip install --no-cache-dir -e . --no-deps
+# Example data (library SMILES, docking scores, multi-objective labels)
+COPY molpal/libraries/Enamine10k.csv.gz /workspace/molpal/libraries/Enamine10k.csv.gz
+COPY molpal/data/Enamine10k_scores.csv.gz /workspace/molpal/data/Enamine10k_scores.csv.gz
+COPY molpal/data/Enamine10k_moo.csv.gz /workspace/molpal/data/Enamine10k_moo.csv.gz
 
-ENTRYPOINT ["/entrypoint.sh"]
+# Precompute fingerprints so the image is plug-and-play out of the box
+RUN python /workspace/scripts/prep_fps_serial.py
+
 CMD ["bash"]

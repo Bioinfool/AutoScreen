@@ -24,6 +24,9 @@ molpal/chkpts/
 # Fingerprints: regenerate via scripts/prep_fps_serial.py (~22MB)
 molpal/libraries/*.h5
 
+# AutoScreen async campaign checkpoints / transient run dirs
+runs/
+
 # IDE / OS
 .vscode/
 .idea/

@@ -1,0 +1,101 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="500" viewBox="0 0 720 500" font-family="Segoe UI, Arial, sans-serif">
+<rect width="720" height="500" fill="white"/>
+<text x="320.0" y="26" text-anchor="middle" font-size="17" font-weight="600">Pareto-front recall</text>
+<line x1="70" y1="423.8" x2="570" y2="423.8" stroke="#e6e6e6" stroke-width="1"/>
+<text x="62" y="427.8" text-anchor="end" font-size="12" fill="#444">0</text>
+<line x1="70" y1="336.8" x2="570" y2="336.8" stroke="#e6e6e6" stroke-width="1"/>
+<text x="62" y="340.8" text-anchor="end" font-size="12" fill="#444">0.2</text>
+<line x1="70" y1="249.9" x2="570" y2="249.9" stroke="#e6e6e6" stroke-width="1"/>
+<text x="62" y="253.9" text-anchor="end" font-size="12" fill="#444">0.4</text>
+<line x1="70" y1="163.0" x2="570" y2="163.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="62" y="167.0" text-anchor="end" font-size="12" fill="#444">0.6</text>
+<line x1="70" y1="76.0" x2="570" y2="76.0" stroke="#e6e6e6" stroke-width="1"/>
+<text x="62" y="80.0" text-anchor="end" font-size="12" fill="#444">0.8</text>
+<line x1="140.2" y1="50" x2="140.2" y2="440" stroke="#f0f0f0" stroke-width="1"/>
+<text x="140.2" y="460" text-anchor="middle" font-size="12" fill="#444">250</text>
+<line x1="260.4" y1="50" x2="260.4" y2="440" stroke="#f0f0f0" stroke-width="1"/>
+<text x="260.4" y="460" text-anchor="middle" font-size="12" fill="#444">500</text>
+<line x1="380.6" y1="50" x2="380.6" y2="440" stroke="#f0f0f0" stroke-width="1"/>
+<text x="380.6" y="460" text-anchor="middle" font-size="12" fill="#444">750</text>
+<line x1="500.8" y1="50" x2="500.8" y2="440" stroke="#f0f0f0" stroke-width="1"/>
+<text x="500.8" y="460" text-anchor="middle" font-size="12" fill="#444">1000</text>
+<line x1="70" y1="50" x2="70" y2="440" stroke="#333" stroke-width="1.5"/>
+<line x1="70" y1="440" x2="570" y2="440" stroke="#333" stroke-width="1.5"/>
+<text x="320.0" y="482" text-anchor="middle" font-size="13">Molecules evaluated (labeling budget)</text>
+<text x="20" y="245.0" text-anchor="middle" font-size="13" transform="rotate(-90 20 245.0)">Pareto-front recall</text>
+<polygon points="70.0,415.1 120.0,289.3 170.0,242.2 220.0,211.7 270.0,170.5 320.0,159.7 370.0,149.0 420.0,130.8 470.0,108.2 520.0,85.3 570.0,67.7 570.0,103.7 520.0,116.6 470.0,139.5 420.0,152.4 370.0,174.9 320.0,184.6 270.0,199.2 220.0,218.9 170.0,249.4 120.0,339.6 70.0,422.3" fill="#1f77b4" fill-opacity="0.12" stroke="none"/>
+<polyline points="70.0,418.7 120.0,314.5 170.0,245.8 220.0,215.3 270.0,184.8 320.0,172.1 370.0,162.0 420.0,141.6 470.0,123.8 520.0,101.0 570.0,85.7" fill="none" stroke="#1f77b4" stroke-width="2.2"/>
+<circle cx="70.0" cy="418.7" r="3" fill="#1f77b4"/>
+<circle cx="120.0" cy="314.5" r="3" fill="#1f77b4"/>
+<circle cx="170.0" cy="245.8" r="3" fill="#1f77b4"/>
+<circle cx="220.0" cy="215.3" r="3" fill="#1f77b4"/>
+<circle cx="270.0" cy="184.8" r="3" fill="#1f77b4"/>
+<circle cx="320.0" cy="172.1" r="3" fill="#1f77b4"/>
+<circle cx="370.0" cy="162.0" r="3" fill="#1f77b4"/>
+<circle cx="420.0" cy="141.6" r="3" fill="#1f77b4"/>
+<circle cx="470.0" cy="123.8" r="3" fill="#1f77b4"/>
+<circle cx="520.0" cy="101.0" r="3" fill="#1f77b4"/>
+<circle cx="570.0" cy="85.7" r="3" fill="#1f77b4"/>
+<polygon points="70.0,415.1 120.0,328.3 170.0,316.0 220.0,257.8 270.0,231.9 320.0,180.2 370.0,178.7 420.0,141.4 470.0,130.8 520.0,112.6 570.0,99.1 570.0,118.1 520.0,119.8 470.0,152.4 420.0,167.3 370.0,185.9 320.0,225.1 270.0,264.8 220.0,305.0 170.0,323.1 120.0,387.1 70.0,422.3" fill="#ff7f0e" fill-opacity="0.12" stroke="none"/>
+<polyline points="70.0,418.7 120.0,357.7 170.0,319.5 220.0,281.4 270.0,248.4 320.0,202.6 370.0,182.3 420.0,154.3 470.0,141.6 520.0,116.2 570.0,108.6" fill="none" stroke="#ff7f0e" stroke-width="2.2"/>
+<circle cx="70.0" cy="418.7" r="3" fill="#ff7f0e"/>
+<circle cx="120.0" cy="357.7" r="3" fill="#ff7f0e"/>
+<circle cx="170.0" cy="319.5" r="3" fill="#ff7f0e"/>
+<circle cx="220.0" cy="281.4" r="3" fill="#ff7f0e"/>
+<circle cx="270.0" cy="248.4" r="3" fill="#ff7f0e"/>
+<circle cx="320.0" cy="202.6" r="3" fill="#ff7f0e"/>
+<circle cx="370.0" cy="182.3" r="3" fill="#ff7f0e"/>
+<circle cx="420.0" cy="154.3" r="3" fill="#ff7f0e"/>
+<circle cx="470.0" cy="141.6" r="3" fill="#ff7f0e"/>
+<circle cx="520.0" cy="116.2" r="3" fill="#ff7f0e"/>
+<circle cx="570.0" cy="108.6" r="3" fill="#ff7f0e"/>
+<polygon points="70.0,415.1 120.0,410.0 170.0,399.8 220.0,394.7 270.0,392.2 320.0,379.4 370.0,363.4 420.0,363.4 470.0,363.4 520.0,352.0 570.0,353.0 570.0,367.4 520.0,373.5 470.0,382.4 420.0,382.4 370.0,382.4 320.0,391.9 270.0,399.4 220.0,401.9 170.0,407.0 120.0,417.2 70.0,422.3" fill="#2ca02c" fill-opacity="0.12" stroke="none"/>
+<polyline points="70.0,418.7 120.0,413.6 170.0,403.4 220.0,398.3 270.0,395.8 320.0,385.6 370.0,372.9 420.0,372.9 470.0,372.9 520.0,362.8 570.0,360.2" fill="none" stroke="#2ca02c" stroke-width="2.2"/>
+<circle cx="70.0" cy="418.7" r="3" fill="#2ca02c"/>
+<circle cx="120.0" cy="413.6" r="3" fill="#2ca02c"/>
+<circle cx="170.0" cy="403.4" r="3" fill="#2ca02c"/>
+<circle cx="220.0" cy="398.3" r="3" fill="#2ca02c"/>
+<circle cx="270.0" cy="395.8" r="3" fill="#2ca02c"/>
+<circle cx="320.0" cy="385.6" r="3" fill="#2ca02c"/>
+<circle cx="370.0" cy="372.9" r="3" fill="#2ca02c"/>
+<circle cx="420.0" cy="372.9" r="3" fill="#2ca02c"/>
+<circle cx="470.0" cy="372.9" r="3" fill="#2ca02c"/>
+<circle cx="520.0" cy="362.8" r="3" fill="#2ca02c"/>
+<circle cx="570.0" cy="360.2" r="3" fill="#2ca02c"/>
+<polygon points="70.0,415.1 120.0,323.4 170.0,283.5 220.0,242.2 270.0,173.4 320.0,161.3 370.0,148.2 420.0,127.9 470.0,111.8 520.0,81.9 570.0,75.1 570.0,106.5 520.0,125.1 470.0,130.8 420.0,135.0 370.0,155.4 320.0,182.9 270.0,216.6 220.0,249.4 170.0,314.9 120.0,361.4 70.0,422.3" fill="#d62728" fill-opacity="0.12" stroke="none"/>
+<polyline points="70.0,418.7 120.0,342.4 170.0,299.2 220.0,245.8 270.0,195.0 320.0,172.1 370.0,151.8 420.0,131.5 470.0,121.3 520.0,103.5 570.0,90.8" fill="none" stroke="#d62728" stroke-width="2.2"/>
+<circle cx="70.0" cy="418.7" r="3" fill="#d62728"/>
+<circle cx="120.0" cy="342.4" r="3" fill="#d62728"/>
+<circle cx="170.0" cy="299.2" r="3" fill="#d62728"/>
+<circle cx="220.0" cy="245.8" r="3" fill="#d62728"/>
+<circle cx="270.0" cy="195.0" r="3" fill="#d62728"/>
+<circle cx="320.0" cy="172.1" r="3" fill="#d62728"/>
+<circle cx="370.0" cy="151.8" r="3" fill="#d62728"/>
+<circle cx="420.0" cy="131.5" r="3" fill="#d62728"/>
+<circle cx="470.0" cy="121.3" r="3" fill="#d62728"/>
+<circle cx="520.0" cy="103.5" r="3" fill="#d62728"/>
+<circle cx="570.0" cy="90.8" r="3" fill="#d62728"/>
+<polygon points="70.0,415.1 120.0,320.5 170.0,268.1 220.0,216.6 270.0,183.3 320.0,168.7 370.0,153.9 420.0,120.1 470.0,96.3 520.0,88.1 570.0,77.8 570.0,103.7 520.0,124.0 470.0,141.2 420.0,163.2 370.0,185.2 320.0,206.1 270.0,227.0 220.0,254.7 170.0,289.7 120.0,389.8 70.0,422.3" fill="#9467bd" fill-opacity="0.12" stroke="none"/>
+<polyline points="70.0,418.7 120.0,355.1 170.0,278.9 220.0,235.7 270.0,205.2 320.0,187.4 370.0,169.6 420.0,141.6 470.0,118.7 520.0,106.0 570.0,90.8" fill="none" stroke="#9467bd" stroke-width="2.2"/>
+<circle cx="70.0" cy="418.7" r="3" fill="#9467bd"/>
+<circle cx="120.0" cy="355.1" r="3" fill="#9467bd"/>
+<circle cx="170.0" cy="278.9" r="3" fill="#9467bd"/>
+<circle cx="220.0" cy="235.7" r="3" fill="#9467bd"/>
+<circle cx="270.0" cy="205.2" r="3" fill="#9467bd"/>
+<circle cx="320.0" cy="187.4" r="3" fill="#9467bd"/>
+<circle cx="370.0" cy="169.6" r="3" fill="#9467bd"/>
+<circle cx="420.0" cy="141.6" r="3" fill="#9467bd"/>
+<circle cx="470.0" cy="118.7" r="3" fill="#9467bd"/>
+<circle cx="520.0" cy="106.0" r="3" fill="#9467bd"/>
+<circle cx="570.0" cy="90.8" r="3" fill="#9467bd"/>
+<line x1="590" y1="60" x2="614" y2="60" stroke="#1f77b4" stroke-width="3"/>
+<text x="620" y="64" font-size="13" fill="#222">greedy</text>
+<line x1="590" y1="82" x2="614" y2="82" stroke="#ff7f0e" stroke-width="3"/>
+<text x="620" y="86" font-size="13" fill="#222">pareto</text>
+<line x1="590" y1="104" x2="614" y2="104" stroke="#2ca02c" stroke-width="3"/>
+<text x="620" y="108" font-size="13" fill="#222">random</text>
+<line x1="590" y1="126" x2="614" y2="126" stroke="#d62728" stroke-width="3"/>
+<text x="620" y="130" font-size="13" fill="#222">ucb</text>
+<line x1="590" y1="148" x2="614" y2="148" stroke="#9467bd" stroke-width="3"/>
+<text x="620" y="152" font-size="13" fill="#222">weighted</text>
+</svg>

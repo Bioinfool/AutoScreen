@@ -1,0 +1,13 @@
+.git
+.gitignore
+**/__pycache__/
+*.pyc
+*.pyo
+runs/
+results/_*.svg
+molpal/libraries/*.h5
+*.log
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

@@ -1,22 +1,16 @@
 services:
-  molpal:
+  autoscreen:
     build:
       context: .
       dockerfile: docker/Dockerfile
-    image: autoscreeen/molpal:cpu
-    container_name: autoscreeen-molpal
-    working_dir: /workspace/molpal
+    image: autoscreen:cpu
+    container_name: autoscreen
+    working_dir: /workspace
+    # Code and data are baked into the image (plug-and-play). Only campaign
+    # outputs are mounted back to the host so results survive the container.
     volumes:
-      - ./molpal:/workspace/molpal
-      - molpal-runs:/workspace/molpal/runs
-      - molpal-ray:/tmp/ray
-    environment:
-      RAY_NUM_CPUS: "4"
-      RAY_NUM_GPUS: "0"
+      - ./runs:/workspace/runs
+      - ./results:/workspace/results
     stdin_open: true
     tty: true
     command: bash
-
-volumes:
-  molpal-runs:
-  molpal-ray:
