@@ -75,7 +75,10 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
     if library.static_Y is not None and "sa_ease" in library.static_names:
         static_sa = library.static_col("sa_ease")
     constraints = ConstraintManager(
-        plate=plate, stock_available=stock, static_sa_ease=static_sa
+        plate=plate,
+        stock_available=stock,
+        static_sa_ease=static_sa,
+        empty_policy=str(constraints_cfg.get("empty_policy", "fail_closed")),
     )
 
     evaluator = None
@@ -144,6 +147,8 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
     ckpt = _resolve(cfg.get("checkpoint_dir", "runs/default"), root)
     sur = cfg.get("surrogate", {})
     async_cfg = cfg.get("async", {})
+    # Default poll interval: Vina needs wall-clock pacing; Replay can stay tight.
+    default_poll = 0.05 if executor_kind == "vina" else 0.0
     return CampaignManager(
         library=library,
         executor=executor,
@@ -165,6 +170,17 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
         max_active_jobs=int(async_cfg.get("max_active_jobs", cfg.get("max_active_jobs", 2))),
         positive_idx=list(controls.get("positive_idx") or []),
         negative_idx=list(controls.get("negative_idx") or []),
+        poll_interval_s=float(async_cfg.get("poll_interval_s", cfg.get("poll_interval_s", default_poll))),
+        max_wall_time_s=(
+            float(async_cfg["max_wall_time_s"])
+            if async_cfg.get("max_wall_time_s") is not None
+            else None
+        ),
+        max_idle_time_s=(
+            float(async_cfg["max_idle_time_s"])
+            if async_cfg.get("max_idle_time_s") is not None
+            else None
+        ),
     )
 
 

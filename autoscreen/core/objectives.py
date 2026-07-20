@@ -15,6 +15,15 @@ class ObjectiveSpec:
     maximize: bool = True
     source: str | None = None  # e.g. "dock", "qed", "sa", "moo:col"
 
+    def to_maximize(self, raw_value: float) -> float:
+        """Map raw executor/oracle units onto the maximize convention used by AL."""
+        v = float(raw_value)
+        return v if self.maximize else -v
+
+    def from_maximize(self, model_value: float) -> float:
+        v = float(model_value)
+        return v if self.maximize else -v
+
 
 @dataclass
 class ObjectiveSchema:
@@ -47,10 +56,23 @@ class ObjectiveSchema:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "ObjectiveSchema":
+        def _as_spec(x: Any, default_kind: Kind) -> ObjectiveSpec:
+            if isinstance(x, ObjectiveSpec):
+                return x
+            if isinstance(x, dict):
+                return ObjectiveSpec(
+                    name=str(x["name"]),
+                    kind=x.get("kind", default_kind),
+                    maximize=bool(x.get("maximize", True)),
+                    source=x.get("source"),
+                )
+            raise TypeError(f"Invalid objective entry: {x!r}")
+
         return cls(
-            expensive=[ObjectiveSpec(**x) for x in d.get("expensive", [])],
-            static=[ObjectiveSpec(**x) for x in d.get("static", [])],
+            expensive=[_as_spec(x, "expensive") for x in d.get("expensive", [])],
+            static=[_as_spec(x, "static") for x in d.get("static", [])],
         )
+
 
 
 def default_schema() -> ObjectiveSchema:
@@ -83,8 +105,8 @@ def parse_objective_schema(cfg: dict[str, Any] | None) -> ObjectiveSchema:
     if isinstance(raw_obj, dict) and ("expensive" in raw_obj or "static" in raw_obj):
         return ObjectiveSchema.from_dict(
             {
-                "expensive": [_coerce_spec(x, "expensive") for x in raw_obj.get("expensive", [])],
-                "static": [_coerce_spec(x, "static") for x in raw_obj.get("static", [])],
+                "expensive": list(raw_obj.get("expensive") or []),
+                "static": list(raw_obj.get("static") or []),
             }
         )
 

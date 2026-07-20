@@ -128,6 +128,7 @@ class JobStatus:
     n_pending: int = 0
     round: int = -1
     message: str = ""
+    next_poll_after: float = 0.0  # seconds; executor hint for Campaign sleep
 
 
 @dataclass

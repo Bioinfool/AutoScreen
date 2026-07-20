@@ -80,6 +80,9 @@ class CampaignManager:
         max_active_jobs: int = 2,
         positive_idx: list[int] | None = None,
         negative_idx: list[int] | None = None,
+        poll_interval_s: float = 0.0,
+        max_wall_time_s: float | None = None,
+        max_idle_time_s: float | None = None,
     ):
         if hasattr(library, "Y_hidden") and getattr(library, "Y_hidden") is not None:
             raise ValueError(
@@ -95,6 +98,9 @@ class CampaignManager:
         self.init_frac = init_frac
         self.max_polls = max_polls
         self.max_active_jobs = max(1, int(max_active_jobs))
+        self.poll_interval_s = float(poll_interval_s)
+        self.max_wall_time_s = max_wall_time_s
+        self.max_idle_time_s = max_idle_time_s
         self.use_plate_layout = use_plate_layout
         self.plate = plate or PlateConfig()
         self.constraints = constraints or ConstraintManager(self.plate)
@@ -212,7 +218,7 @@ class CampaignManager:
                     rec.status = JobLifecycle.SUBMITTED
                     rec.retry_count += 1
                     rec.message = "submitted after resume from PREPARED"
-                    self.cand.mark_submitted(self._experimental_idxs(rec.job), remote)
+                    self.cand.mark_submitted(self._experimental_idxs(rec.job), rec.job.job_id)
                     log.warning("Completed deferred submit for %s -> %s", rec.job.job_id, remote)
                 except Exception as e:
                     rec.status = JobLifecycle.FAILED
@@ -411,10 +417,11 @@ class CampaignManager:
         )
         return remote_id
 
-    def _poll_open(self) -> tuple[dict[str, list[Observation]], list[JobRecord]]:
-        """Poll open jobs; return newly seen observations keyed by local job_id."""
+    def _poll_open(self) -> tuple[dict[str, list[Observation]], list[JobRecord], float]:
+        """Poll open jobs; return newly seen observations, completed jobs, sleep hint."""
         newly_by_job: dict[str, list[Observation]] = {}
         completed: list[JobRecord] = []
+        sleep_hint = 0.0
 
         for rec in list(self.jobs.open_jobs()):
             if rec.status is JobLifecycle.PREPARED or not rec.remote_job_id:
@@ -433,6 +440,7 @@ class CampaignManager:
             try:
                 status = self.executor.poll(rec.remote_job_id)
                 rec.poll_fail_count = 0
+                sleep_hint = max(sleep_hint, float(getattr(status, "next_poll_after", 0.0) or 0.0))
             except JobNotFound as e:
                 if rec.retry_count >= MAX_RESUBMIT:
                     rec.status = JobLifecycle.FAILED
@@ -458,6 +466,7 @@ class CampaignManager:
                     rec.status = JobLifecycle.FAILED
                     rec.message = f"max poll failures: {e}"
                     self.cand.release(self._experimental_idxs(rec.job), job_id=rec.job.job_id)
+                sleep_hint = max(sleep_hint, self.poll_interval_s or 0.5)
                 continue
 
             rec.last_poll_at = time.time()
@@ -470,7 +479,6 @@ class CampaignManager:
             ]
             if running_idxs:
                 self.cand.mark_running(running_idxs)
-            # Also mark submitted experimental items as RUNNING once job is active
             if not status.done:
                 self.cand.mark_running(
                     [
@@ -490,7 +498,7 @@ class CampaignManager:
                     WellState.FAILED,
                     WellState.QC_REJECTED,
                     WellState.CANCELLED,
-                ) or o.usable:
+                ) or o.usable or o.contributes_measurement:
                     rec.seen_item_ids.add(key)
                     job_new.append(o)
             if job_new:
@@ -498,7 +506,7 @@ class CampaignManager:
             if status.done:
                 completed.append(rec)
 
-        return newly_by_job, completed
+        return newly_by_job, completed, sleep_hint
 
     def _ingest(self, observations: list[Observation]) -> int:
         n_train = self.store.add_many(observations)
@@ -606,7 +614,7 @@ class CampaignManager:
 
     def step(self) -> dict[str, Any]:
         """One non-blocking orchestration tick: poll → ingest → maybe submit."""
-        newly_by_job, completed = self._poll_open()
+        newly_by_job, completed, sleep_hint = self._poll_open()
         all_new = [o for obs in newly_by_job.values() for o in obs]
         n_new_train = self._ingest(all_new) if all_new else 0
 
@@ -680,16 +688,34 @@ class CampaignManager:
             "open_jobs": len(self.jobs.open_jobs()),
             "submitted": submitted,
             "next_batch_seq": self.state.next_batch_seq,
+            "sleep_hint": sleep_hint,
             **self._metrics_dict(),
         }
 
-    def run(self, n_rounds: int, *, max_steps: int | None = None) -> list[dict]:
-        """Drive ``step`` until ``n_rounds`` acquisition batches complete after init."""
+    def run(
+        self,
+        n_rounds: int,
+        *,
+        max_steps: int | None = None,
+        poll_interval_s: float | None = None,
+        max_wall_time_s: float | None = None,
+        max_idle_time_s: float | None = None,
+    ) -> list[dict]:
+        """Drive ``step`` until acquisition rounds complete (time-aware, not busy-spin)."""
         self._target_round = self.state.round + n_rounds
-        limit = max_steps if max_steps is not None else max(2000, (n_rounds + 3) * self.max_polls * 10)
+        interval = self.poll_interval_s if poll_interval_s is None else float(poll_interval_s)
+        wall = self.max_wall_time_s if max_wall_time_s is None else max_wall_time_s
+        idle_lim = self.max_idle_time_s if max_idle_time_s is None else max_idle_time_s
+        # Soft step cap only as a safety net; wall/idle clocks are primary for Vina.
+        limit = max_steps if max_steps is not None else max(50_000, (n_rounds + 3) * 5000)
+        t0 = time.time()
+        last_progress = t0
         info: dict[str, Any] = {}
-        for _ in range(limit):
+        for step_i in range(limit):
             info = self.step()
+            progressed = bool(info.get("n_new_obs") or info.get("submitted") or info.get("n_new_train"))
+            if progressed:
+                last_progress = time.time()
             finished = (
                 self.state.init_done
                 and self.state.round >= self._target_round
@@ -702,6 +728,23 @@ class CampaignManager:
             )
             if finished or exhausted:
                 return self.state.history
+            now = time.time()
+            if wall is not None and (now - t0) > float(wall):
+                raise TimeoutError(
+                    f"Campaign exceeded max_wall_time_s={wall} "
+                    f"(round={self.state.round}, open={info.get('open_jobs')})"
+                )
+            if idle_lim is not None and (now - last_progress) > float(idle_lim):
+                raise TimeoutError(
+                    f"Campaign exceeded max_idle_time_s={idle_lim} "
+                    f"(round={self.state.round}, open={info.get('open_jobs')})"
+                )
+            if info.get("open_jobs", 0) > 0 and not progressed:
+                sleep_s = float(info.get("sleep_hint") or 0.0)
+                if sleep_s <= 0:
+                    sleep_s = interval if interval > 0 else (0.05 if self.executor.kind == "vina" else 0.0)
+                if sleep_s > 0:
+                    time.sleep(sleep_s)
         raise TimeoutError(
             f"Campaign exceeded max_steps={limit} "
             f"(round={self.state.round}, open={info.get('open_jobs')}, labeled={info.get('n_labeled')})"

@@ -178,6 +178,7 @@ class VinaExecutor(Executor):
         self._dock_fn = dock_fn or _dock_ligand
         self._jobs: dict[str, _JobRec] = {}
         self._idempotency: dict[str, str] = {}
+        self._rr = 0
         self._pool = ThreadPoolExecutor(max_workers=max(1, int(config.max_workers)))
         Path(config.work_dir).mkdir(parents=True, exist_ok=True)
 
@@ -277,8 +278,7 @@ class VinaExecutor(Executor):
 
         task.future = self._pool.submit(_run)
 
-    def _pump(self, job_id: str, rec: _JobRec) -> None:
-        # Collect finished futures
+    def _collect_finished(self, rec: _JobRec) -> None:
         for task in rec.tasks.values():
             if task.state is not LigandTaskState.RUNNING or task.future is None:
                 continue
@@ -298,7 +298,8 @@ class VinaExecutor(Executor):
                 continue
             self._finalize_task(task, score, message)
 
-        # Launch queued up to max_workers globally across jobs
+    def _fair_launch(self) -> None:
+        """Round-robin launch across jobs so later jobs are not starved."""
         running = sum(
             1
             for r in self._jobs.values()
@@ -306,19 +307,36 @@ class VinaExecutor(Executor):
             if t.state is LigandTaskState.RUNNING
         )
         capacity = max(0, self.config.max_workers - running)
-        for task in rec.tasks.values():
-            if capacity <= 0:
+        if capacity <= 0:
+            return
+        job_ids = list(self._jobs.keys())
+        if not job_ids:
+            return
+        # Rotate start index each call for fairness
+        start = getattr(self, "_rr", 0) % len(job_ids)
+        self._rr = start + 1
+        launched = 0
+        for offset in range(len(job_ids)):
+            if launched >= capacity:
                 break
-            if task.state is LigandTaskState.QUEUED:
-                self._start_task(job_id, task)
-                if task.state is LigandTaskState.RUNNING:
-                    capacity -= 1
+            jid = job_ids[(start + offset) % len(job_ids)]
+            rec = self._jobs[jid]
+            for task in rec.tasks.values():
+                if launched >= capacity:
+                    break
+                if task.state is LigandTaskState.QUEUED:
+                    self._start_task(jid, task)
+                    if task.state is LigandTaskState.RUNNING:
+                        launched += 1
 
     def poll(self, job_id: str) -> JobStatus:
         if job_id not in self._jobs:
             raise JobNotFound(job_id)
+        # Always progress the global queue, not only this job's queued ligands
+        for rec in self._jobs.values():
+            self._collect_finished(rec)
+        self._fair_launch()
         rec = self._jobs[job_id]
-        self._pump(job_id, rec)
 
         observations: list[Observation] = []
         pending = 0
@@ -349,6 +367,7 @@ class VinaExecutor(Executor):
             observations=observations,
             n_pending=pending,
             round=rec.job.round,
+            next_poll_after=0.05 if pending else 0.0,
         )
 
     def cancel(self, job_id: str) -> None:

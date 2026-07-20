@@ -90,10 +90,15 @@ class ConstraintManager:
         plate: PlateConfig | None = None,
         stock_available: np.ndarray | None = None,
         static_sa_ease: np.ndarray | None = None,
+        empty_policy: str = "fail_closed",  # fail_closed | relax | fail_open
     ):
         self.plate = plate or PlateConfig()
         self.stock_available = stock_available
         self.static_sa_ease = static_sa_ease
+        if empty_policy not in ("fail_closed", "relax", "fail_open"):
+            raise ValueError(f"Unknown empty_policy={empty_policy}")
+        self.empty_policy = empty_policy
+        self.last_relaxation: dict | None = None
 
     def feasible_mask(
         self,
@@ -101,21 +106,66 @@ class ConstraintManager:
         pool_global_idx: np.ndarray | None = None,
         **_ignored,
     ) -> np.ndarray:
+        from autoscreen.logging_utils import get_logger
+
+        log = get_logger("constraints")
+        self.last_relaxation = None
         feasible = np.ones(pool_local_n, dtype=bool)
+        sa_thresh = None
         if (
             self.static_sa_ease is not None
             and pool_global_idx is not None
             and self.plate.sa_feasibility_quantile > 0
         ):
             vals = self.static_sa_ease[pool_global_idx]
-            thresh = np.quantile(self.static_sa_ease, self.plate.sa_feasibility_quantile)
-            feasible &= vals >= thresh
+            sa_thresh = float(np.quantile(self.static_sa_ease, self.plate.sa_feasibility_quantile))
+            feasible &= vals >= sa_thresh
         if self.stock_available is not None and pool_global_idx is not None:
             feasible &= self.stock_available[pool_global_idx].astype(bool)
-        if not feasible.any():
-            return np.ones(pool_local_n, dtype=bool)
-        return feasible
+        if feasible.any():
+            return feasible
 
+        if self.empty_policy == "fail_closed":
+            raise RuntimeError(
+                "No feasible candidates under current constraints "
+                "(empty_policy=fail_closed). Relax SA/stock settings or set "
+                "constraints.empty_policy to 'relax' / 'fail_open'."
+            )
+        if self.empty_policy == "fail_open":
+            log.warning(
+                "All candidates infeasible; fail_open disables constraints for this step"
+            )
+            self.last_relaxation = {"policy": "fail_open", "n": pool_local_n}
+            return np.ones(pool_local_n, dtype=bool)
+
+        # relax: progressively widen SA quantile toward 0
+        if (
+            self.static_sa_ease is not None
+            and pool_global_idx is not None
+            and self.plate.sa_feasibility_quantile > 0
+        ):
+            vals = self.static_sa_ease[pool_global_idx]
+            for q in (0.05, 0.02, 0.0):
+                thresh = float(np.quantile(self.static_sa_ease, q))
+                cand = vals >= thresh
+                if self.stock_available is not None:
+                    cand &= self.stock_available[pool_global_idx].astype(bool)
+                if cand.any():
+                    log.warning(
+                        "Relaxed SA quantile %.3f -> %.3f to recover %d feasible",
+                        self.plate.sa_feasibility_quantile,
+                        q,
+                        int(cand.sum()),
+                    )
+                    self.last_relaxation = {
+                        "policy": "relax",
+                        "sa_quantile": q,
+                        "n_feasible": int(cand.sum()),
+                    }
+                    return cand
+        log.warning("Relax failed; falling back to fail_open for this step")
+        self.last_relaxation = {"policy": "relax_fallback_open", "n": pool_local_n}
+        return np.ones(pool_local_n, dtype=bool)
     def diversify(
         self,
         scores: np.ndarray,

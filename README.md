@@ -66,7 +66,7 @@ docker compose run --rm autoscreen python -m autoscreen.cli run --config configs
 
 `pool_idx` 是「库与 MOO 对齐后」的下标，不是原始 CSV 行号；换库时请同步改 YAML 的三条路径，并让 `robot_mock` 的 `AUTOSCREEN_TRUTH_MOO` 指向同一份 `*_moo.csv.gz`。
 
-更大库（如百万级 AmpC）可按同样格式放入 `data/`，改 YAML 即可，无需改代码。
+更大库的数据接口兼容（同样的 CSV / H5 / MOO 路径约定），但**百万级性能尚未完成系统评测**——当前实现会加载全库指纹并在采集时对可用候选做代理预测，内存与 wall-clock 开销仍需实测。
 
 ## 科学与执行边界（当前实现）
 

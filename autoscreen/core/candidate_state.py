@@ -122,7 +122,11 @@ class CandidateStateStore:
             self._job_id[i] = None
 
     def apply_observation(self, obs: Observation) -> None:
-        """Update phase from a single observation (retry-aware)."""
+        """Update phase from a single observation (retry-aware).
+
+        Replicate wells never demote an already LABELED compound. Training truth
+        is owned by ObservationStore aggregates + ``sync_from_store``.
+        """
         i = int(obs.pool_idx)
         if i < 0 or i >= self.n:
             return
@@ -130,6 +134,15 @@ class CandidateStateStore:
             self._phase[i] = CandidatePhase.CONTROL
             return
         if obs.kind is ItemKind.BLANK:
+            return
+        if self._phase[i] is CandidatePhase.LABELED:
+            # Do not let later replicate fail/QC overwrite a trained label
+            return
+        if obs.kind is ItemKind.REPLICATE:
+            # Replicates only contribute measurements; lifecycle follows primary / sync
+            if obs.state is WellState.RUNNING:
+                if self._phase[i] in (CandidatePhase.SELECTED, CandidatePhase.SUBMITTED):
+                    self._phase[i] = CandidatePhase.RUNNING
             return
         if obs.state is WellState.CANCELLED:
             self._phase[i] = CandidatePhase.AVAILABLE
@@ -152,7 +165,6 @@ class CandidateStateStore:
                 self._phase[i] = CandidatePhase.QC_REJECTED
             return
         if obs.contributes_measurement:
-            # Tentative; campaign should call mark_labeled after aggregate confirms
             if self._phase[i] not in (CandidatePhase.LABELED, CandidatePhase.CONTROL):
                 self._phase[i] = CandidatePhase.RUNNING
             return
