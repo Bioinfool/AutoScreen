@@ -1,20 +1,27 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-07-20
+
+Real docking closed loop + engineering hardening (AL VS engine, not production robotic screening).
 
 ### Added
-- Pending-aware acquisition: Tanimoto local penalty vs in-flight compounds
-- `scripts/bench_single_obj.py` for sync vs async single-objective comparison
-- Ruff (critical) + coverage in CI; LICENSE / CHANGELOG / CITATION already present
+- `SimulatedDockExecutor` and CLI `sim_dock` (`configs/sim_dock_demo.yaml`)
+- Real Vina mini closed loop: `configs/vina_mini.yaml`, `scripts/run_vina_closed_loop.py`
+- Windows Vina install script + `docs/vina_setup.md` + demo receptor `data/receptors/1iep_receptor.pdbqt`
+- Bench snapshots: `docs/bench/` (Replay/SimDock enrichment + Vina mini wall-clock)
+- Pending-aware acquisition (Tanimoto local penalty vs in-flight compounds)
 
 ### Fixed
-- Candidate state always binds **local** `job_id` (never remote id) on resume
-- Campaign `run()` is time-driven (`poll_interval_s` / `next_poll_after` / wall & idle timeouts) to avoid Vina busy-spin
-- Replicate observations no longer demote an already `LABELED` compound
-- Structured `objectives: {expensive, static}` YAML parsing
-- Constraint empty-set policy is explicit (`fail_closed` default; `relax` / `fail_open`)
-- Vina ligand scheduling is fair across concurrent jobs (round-robin)
-- Windows-safe pending Tanimoto (no large `@` matmul)
+- Vina Observation maximize convention: `activity = -vina_affinity`
+- Campaign/CLI always `close()` executors
+- Vina receptor/binary early validation; OpenBabel errors include stderr
+- Removed dead Campaign `max_polls` and Vina `qed_sa_lookup`
+- Time-driven campaign loop; local `job_id` binding; fair Vina scheduling
 
 ### Changed
-- Legacy multi-objective HV/Pareto plots archived under `docs/legacy_multiobjective/`
+- Legacy multi-objective HV/Pareto plots under `docs/legacy_multiobjective/`
+- Dropped lightweight smoke-only tests (`test_smoke`, `test_vina_real_smoke`); keep contract/integration tests
+
+## Unreleased
+
+(none)

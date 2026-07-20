@@ -1,0 +1,36 @@
+campaign_id: sim_dock_demo
+seed: 0
+executor: sim_dock
+
+data:
+  library_csv: data/Enamine10k.csv.gz
+  fps_h5: data/Enamine10k.h5
+  moo_csv: data/Enamine10k_moo.csv.gz
+
+init_frac: 0.002
+batch_size: 16
+n_rounds: 2
+acquisition: random
+beta: 0.5
+checkpoint_dir: runs/sim_dock_demo
+
+objectives:
+  - name: activity
+    kind: expensive
+static_properties:
+  - name: qed
+    kind: static
+  - name: sa_ease
+    kind: static
+
+sim_dock:
+  latency_s: 0.05
+  max_workers: 4
+  poll_hint_s: 0.01
+
+async:
+  max_active_jobs: 2
+  pending_penalty: 0.0
+
+surrogate:
+  n_estimators: 20

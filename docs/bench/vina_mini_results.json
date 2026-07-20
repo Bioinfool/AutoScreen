@@ -1,0 +1,38 @@
+{
+  "version": "vina_mini_v1",
+  "receptor": "data/receptors/1iep_receptor.pdbqt",
+  "notes": [
+    "Observation.activity = -vina_affinity (maximize convention).",
+    "Wall-clock compares VinaExecutor thread-pool scheduling, not Replay.",
+    "MOO/Replay labels are not used as docking ground truth here."
+  ],
+  "rows": [
+    {
+      "mode": "sync",
+      "max_workers": 1,
+      "max_active_jobs": 1,
+      "n_rounds": 2,
+      "batch_size": 4,
+      "init_frac": 0.001,
+      "n_labeled": 18,
+      "wall_clock_s": 97.603,
+      "mean_activity": 8.5572,
+      "history_len": 3,
+      "checkpoint": "G:\\AutoScreen\\runs\\vina_mini_sync"
+    },
+    {
+      "mode": "async",
+      "max_workers": 2,
+      "max_active_jobs": 2,
+      "n_rounds": 2,
+      "batch_size": 4,
+      "init_frac": 0.001,
+      "n_labeled": 18,
+      "wall_clock_s": 76.534,
+      "mean_activity": 8.8551,
+      "history_len": 3,
+      "checkpoint": "G:\\AutoScreen\\runs\\vina_mini_async",
+      "speedup_vs_sync": 1.275
+    }
+  ]
+}

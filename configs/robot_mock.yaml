@@ -30,7 +30,6 @@ robot:
   truth_moo: data/Enamine10k_moo.csv.gz
   timeout_s: 30.0
   poll_interval_s: 0.2
-  max_polls: 100
 
 constraints:
   stock_out_rate: 0.05

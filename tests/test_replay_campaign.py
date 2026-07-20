@@ -29,7 +29,6 @@ def _setup(tmp_path: Path, **kwargs):
         init_frac=0.005,
         checkpoint_dir=tmp_path / "ckpt",
         n_estimators=20,
-        max_polls=20,
         evaluator=BenchmarkEvaluator(oracle),
         max_active_jobs=kwargs.get("max_active_jobs", 1),
         schema=lib.schema,
@@ -61,7 +60,6 @@ def test_replay_campaign_two_rounds(tmp_path: Path):
         checkpoint_dir=tmp_path / "ckpt",
         n_estimators=20,
         resume=True,
-        max_polls=20,
         max_active_jobs=1,
         schema=camp.library.schema,
     )

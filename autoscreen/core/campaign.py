@@ -73,7 +73,6 @@ class CampaignManager:
         plate: PlateConfig | None = None,
         constraints: ConstraintManager | None = None,
         use_plate_layout: bool = False,
-        max_polls: int = 200,
         resume: bool = False,
         schema: ObjectiveSchema | None = None,
         evaluator: BenchmarkEvaluator | None = None,
@@ -97,7 +96,6 @@ class CampaignManager:
         self.evaluator = evaluator
         self.batch_size = batch_size
         self.init_frac = init_frac
-        self.max_polls = max_polls
         self.max_active_jobs = max(1, int(max_active_jobs))
         self.poll_interval_s = float(poll_interval_s)
         self.max_wall_time_s = max_wall_time_s
@@ -759,10 +757,17 @@ class CampaignManager:
             if info.get("open_jobs", 0) > 0 and not progressed:
                 sleep_s = float(info.get("sleep_hint") or 0.0)
                 if sleep_s <= 0:
-                    sleep_s = interval if interval > 0 else (0.05 if self.executor.kind == "vina" else 0.0)
+                    busy = self.executor.kind in ("vina", "sim_dock")
+                    sleep_s = interval if interval > 0 else (0.05 if busy else 0.0)
                 if sleep_s > 0:
                     time.sleep(sleep_s)
         raise TimeoutError(
             f"Campaign exceeded max_steps={limit} "
             f"(round={self.state.round}, open={info.get('open_jobs')}, labeled={info.get('n_labeled')})"
         )
+
+    def close(self) -> None:
+        """Release executor resources (thread pools, HTTP clients)."""
+        close = getattr(self.executor, "close", None)
+        if callable(close):
+            close()

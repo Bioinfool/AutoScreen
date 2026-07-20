@@ -67,6 +67,11 @@ def _parse_vina_score(stdout: str) -> float | None:
     return None
 
 
+def affinity_to_activity(affinity: float) -> float:
+    """Map Vina affinity (kcal/mol, lower/better) to AutoScreen maximize activity."""
+    return -float(affinity)
+
+
 def _dock_ligand(
     *,
     smiles: str,
@@ -100,14 +105,18 @@ def _dock_ligand(
 
     ligand_pdbqt = work / "ligand.pdbqt"
     obabel = shutil.which("obabel") or shutil.which("obabel.exe")
-    if obabel:
-        subprocess.run(
-            [obabel, str(ligand_pdb), "-O", str(ligand_pdbqt)],
-            check=False,
-            capture_output=True,
-        )
-    if not ligand_pdbqt.exists():
-        return None, "need OpenBabel for PDBQT"
+    if not obabel:
+        return None, "OpenBabel not found on PATH (install openbabel-wheel or set PATH)"
+    proc_ob = subprocess.run(
+        [obabel, str(ligand_pdb), "-O", str(ligand_pdbqt)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if proc_ob.returncode != 0 or not ligand_pdbqt.exists():
+        err = (proc_ob.stderr or proc_ob.stdout or "").strip()
+        detail = err[:500] if err else f"exit {proc_ob.returncode}, no pdbqt written"
+        return None, f"OpenBabel PDBQT conversion failed: {detail}"
 
     out = work / "out.pdbqt"
     log_path = work / "vina.log"
@@ -157,6 +166,7 @@ def _dock_ligand(
     score = _parse_vina_score(proc.stdout)
     if score is None:
         return None, "parse failed"
+    # Cache raw Vina affinity (kcal/mol); Observation converts via affinity_to_activity.
     score_path.write_text(str(score), encoding="utf-8")
     return score, "ok"
 
@@ -169,12 +179,10 @@ class VinaExecutor(Executor):
     def __init__(
         self,
         config: VinaConfig,
-        qed_sa_lookup: dict[str, tuple[float, float]] | None = None,
         *,
         dock_fn=None,
     ):
         self.config = config
-        self.qed_sa_lookup = qed_sa_lookup or {}
         self._dock_fn = dock_fn or _dock_ligand
         self._jobs: dict[str, _JobRec] = {}
         self._idempotency: dict[str, str] = {}
@@ -184,7 +192,10 @@ class VinaExecutor(Executor):
 
     @property
     def available(self) -> bool:
-        return bool(self.config.receptor) and shutil.which(self.config.vina_bin) is not None
+        if not self.config.receptor:
+            return False
+        bin_path = Path(self.config.vina_bin)
+        return bin_path.is_file() or shutil.which(self.config.vina_bin) is not None
 
     def close(self) -> None:
         self._pool.shutdown(wait=False, cancel_futures=True)
@@ -195,11 +206,13 @@ class VinaExecutor(Executor):
                 "VinaExecutor: receptor PDBQT path is not configured. "
                 "Set vina.receptor in the config file."
             )
-        if self._dock_fn is _dock_ligand and shutil.which(self.config.vina_bin) is None:
-            raise RuntimeError(
-                f"VinaExecutor: binary '{self.config.vina_bin}' not found on PATH. "
-                "Install AutoDock Vina or set vina.vina_bin."
-            )
+        if self._dock_fn is _dock_ligand:
+            bin_path = Path(self.config.vina_bin)
+            if not (bin_path.is_file() or shutil.which(self.config.vina_bin)):
+                raise RuntimeError(
+                    f"VinaExecutor: binary '{self.config.vina_bin}' not found. "
+                    "Install AutoDock Vina or set vina.vina_bin."
+                )
         key = job.idempotency_key or job.job_id
         if key in self._idempotency:
             return self._idempotency[key]
@@ -254,12 +267,13 @@ class VinaExecutor(Executor):
             )
             return
         task.state = LigandTaskState.COMPLETED
+        # Observation.values use maximize convention (stronger binder → larger activity).
         task.observation = Observation(
-            values=[-score],
+            values=[affinity_to_activity(score)],
             state=WellState.COMPLETED,
             qc_passed=True,
             message="ok",
-            raw={"dock": score},
+            raw={"vina_affinity": float(score), "activity": affinity_to_activity(score)},
             **common,
         )
 

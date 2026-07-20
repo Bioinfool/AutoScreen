@@ -5,4 +5,4 @@ Virtual screening (Replay / Vina) and robotic experiments are pluggable executor
 not the decision layer itself.
 """
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

@@ -131,7 +131,6 @@ def test_robot_campaign_http(tmp_path, robot_client):
         plate=plate,
         constraints=ConstraintManager(plate=plate, static_sa_ease=lib.static_col("sa_ease")),
         use_plate_layout=True,
-        max_polls=20,
         beta=0.5,
         evaluator=BenchmarkEvaluator(oracle),
         max_active_jobs=1,

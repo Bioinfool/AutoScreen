@@ -1,21 +1,23 @@
-campaign_id: vina_demo
+# Minimal real-docking closed loop (Abl / 1iep). Budget ~≤30 docks.
+campaign_id: vina_mini
 seed: 0
 executor: vina
 
 data:
   library_csv: data/Enamine10k.csv.gz
   fps_h5: data/Enamine10k.h5
+  # Optional benchmark labels (Replay MOO scale ≠ Vina); useful for tooling only.
   moo_csv: data/Enamine10k_moo.csv.gz
 
 init_frac: 0.001
 batch_size: 4
-n_rounds: 1
+n_rounds: 2
 acquisition: greedy
 beta: 1.0
-checkpoint_dir: runs/vina_demo
+checkpoint_dir: runs/vina_mini
 benchmark: false
 
-# activity stored as -vina_affinity (maximize). Raw affinity kept in Observation.raw.
+# activity = -vina_affinity (maximize); stronger binder → larger activity
 objectives:
   - name: activity
     kind: expensive
@@ -26,24 +28,23 @@ static_properties:
   - name: sa_ease
     kind: static
 
-# Demo receptor: Abl kinase (PDB 1iep) from AutoDock-Vina examples.
-# Box from Vina basic docking tutorial.
 vina:
   receptor: data/receptors/1iep_receptor.pdbqt
   box_center: [15.190, 53.903, 16.917]
   box_size: [20.0, 20.0, 20.0]
   exhaustiveness: 4
   num_modes: 1
-  cpu: 4
+  cpu: 2
   vina_bin: tools/bin/vina.exe
-  work_dir: runs/vina_work
+  work_dir: runs/vina_mini_work
   max_workers: 2
-  per_ligand_timeout_s: 120
+  per_ligand_timeout_s: 90
   max_retries: 1
 
 async:
   max_active_jobs: 2
   pending_penalty: 0.0
+  poll_interval_s: 0.05
 
 surrogate:
-  n_estimators: 30
+  n_estimators: 20

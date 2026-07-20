@@ -21,6 +21,10 @@ data/*.h5
 runs/
 results/
 
+# Local docking binaries (use scripts/install_vina_windows.ps1)
+tools/bin/*.exe
+!tools/bin/.gitkeep
+
 # Legacy / local noise
 autoscreen_legacy/
 results_run.log

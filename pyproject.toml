@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "autoscreen"
-version = "0.2.0"
+version = "0.3.0"
 description = "Active-learning decision and task-orchestration engine for virtual and robotic screening"
 readme = "README.md"
 requires-python = ">=3.10"

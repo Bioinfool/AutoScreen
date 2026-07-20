@@ -53,6 +53,16 @@ docker compose up --build -d robot-mock
 docker compose run --rm autoscreen python -m autoscreen.cli run --config configs/robot_mock.yaml
 ```
 
+真实 Vina 对接闭环（Windows）：见 [`docs/vina_setup.md`](docs/vina_setup.md)。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/install_vina_windows.ps1
+pip install -e ".[prep]" openbabel-wheel
+$env:Path = "$(Resolve-Path tools\bin);$env:Path"
+python scripts/run_vina_closed_loop.py
+# 或: python -m autoscreen.cli run --config configs/vina_mini.yaml
+```
+
 ## 数据与库规模
 
 示例数据在 [`data/`](data/)：
@@ -80,16 +90,18 @@ docker compose run --rm autoscreen python -m autoscreen.cli run --config configs
 - **失败/QC** 默认可重试一次（`RETRYABLE`），超限后永久 `FAILED` / `QC_REJECTED`。
 - **Pending-aware**：并发 Job 中的分子本身不可再选；对其结构邻居施加 Tanimoto 局部惩罚（非完整 Kriging believer）。
 
-单目标基准对比（sync vs async）：
+基准结果（Enamine10k 快照）：[`docs/bench/single_obj.md`](docs/bench/single_obj.md)（Replay/SimDock）；真实对接 mini：[`docs/bench/vina_mini.md`](docs/bench/vina_mini.md)。
 
 ```bash
-python scripts/bench_single_obj.py --rounds 3 --batch-size 50
+# 富集（Replay）+ 吞吐（SimulatedDock，无需 Vina）
+python scripts/bench_single_obj.py --suite both --rounds 5 --batch-size 50
 ```
 
 ## 叙事边界
 
 - 可以说：主动学习虚拟筛选 + 可插拔执行器接口 + 异步编排骨架（JobStore）  
 - 不可以说：已完成真实机器人药筛；不可以说 Vina 路径已是生产级异步对接
+- SimulatedDock 吞吐结果是调度代理实验，不是真实对接耗时
 
 ## 开发与测试
 

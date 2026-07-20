@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +18,7 @@ from autoscreen.core.objectives import parse_objective_schema
 from autoscreen.core.oracle import load_moo_oracle
 from autoscreen.executors.replay import ReplayExecutor
 from autoscreen.executors.robot import RobotExecutor
+from autoscreen.executors.sim_dock import SimDockConfig, SimulatedDockExecutor
 from autoscreen.executors.vina import VinaConfig, VinaExecutor
 from autoscreen.logging_utils import get_logger, setup_logging
 
@@ -30,6 +32,27 @@ def _resolve(path: str | None, root: Path) -> Path | None:
     if not p.is_absolute():
         p = root / p
     return p
+
+
+def _resolve_vina_bin(vina_bin: str, root: Path) -> str:
+    """Resolve vina binary path; prefer repo tools/bin on Windows demos."""
+    bin_path = Path(vina_bin)
+    if bin_path.is_file():
+        return str(bin_path.resolve())
+    if not bin_path.is_absolute():
+        cand = root / vina_bin
+        if cand.is_file():
+            return str(cand.resolve())
+        tools = root / "tools" / "bin" / "vina.exe"
+        if vina_bin in ("vina", "vina.exe") and tools.is_file():
+            return str(tools.resolve())
+    found = shutil.which(vina_bin)
+    if found:
+        return found
+    raise ValueError(
+        f"Vina binary not found: {vina_bin!r}. "
+        "Install via scripts/install_vina_windows.ps1 or set vina.vina_bin."
+    )
 
 
 def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
@@ -83,11 +106,13 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
 
     evaluator = None
     oracle = None
-    if moo_path is not None and (
-        executor_kind == "replay" or cfg.get("benchmark", executor_kind == "replay")
-    ):
+    needs_oracle = executor_kind in ("replay", "sim_dock") or bool(
+        cfg.get("benchmark", executor_kind == "replay")
+    )
+    if moo_path is not None and needs_oracle:
         oracle, _ = load_moo_oracle(moo_path, library.smis, schema=schema)
-        evaluator = BenchmarkEvaluator(oracle, use_expensive_only=True)
+        if cfg.get("benchmark", executor_kind in ("replay", "sim_dock")):
+            evaluator = BenchmarkEvaluator(oracle, use_expensive_only=True)
 
     if executor_kind == "replay":
         if oracle is None:
@@ -104,18 +129,38 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
             stagger=stagger,
         )
         use_plate = False
-        max_polls = 50
+    elif executor_kind == "sim_dock":
+        if oracle is None:
+            raise ValueError("sim_dock executor requires data.moo_csv for the private label oracle")
+        sd = cfg.get("sim_dock", {})
+        executor = SimulatedDockExecutor(
+            oracle,
+            SimDockConfig(
+                latency_s=float(sd.get("latency_s", 0.05)),
+                max_workers=int(sd.get("max_workers", 4)),
+                poll_hint_s=float(sd.get("poll_hint_s", 0.02)),
+            ),
+        )
+        use_plate = False
     elif executor_kind == "vina":
         v = cfg.get("vina", {})
+        receptor_raw = v.get("receptor")
+        if not receptor_raw:
+            raise ValueError("vina.receptor is required (path to receptor PDBQT)")
+        receptor_path = _resolve(receptor_raw, root)
+        assert receptor_path is not None
+        if not receptor_path.is_file():
+            raise ValueError(f"vina.receptor not found: {receptor_path}")
+        vina_bin = _resolve_vina_bin(str(v.get("vina_bin", "vina")), root)
         executor = VinaExecutor(
             VinaConfig(
-                receptor=v.get("receptor"),
+                receptor=str(receptor_path),
                 box_center=tuple(v.get("box_center", [0, 0, 0])),
                 box_size=tuple(v.get("box_size", [20, 20, 20])),
                 exhaustiveness=int(v.get("exhaustiveness", 4)),
                 num_modes=int(v.get("num_modes", 1)),
                 cpu=int(v.get("cpu", 4)),
-                vina_bin=v.get("vina_bin", "vina"),
+                vina_bin=vina_bin,
                 work_dir=str(_resolve(v.get("work_dir", "runs/vina_work"), root)),
                 max_workers=int(v.get("max_workers", 2)),
                 per_ligand_timeout_s=float(v.get("per_ligand_timeout_s", 120)),
@@ -123,7 +168,6 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
             ),
         )
         use_plate = False
-        max_polls = 5
     elif executor_kind == "robot":
         r = cfg.get("robot", {})
         base = os.environ.get("AUTOSCREEN_ROBOT_URL", r.get("base_url", "http://127.0.0.1:8080"))
@@ -133,7 +177,6 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
             poll_interval_s=float(r.get("poll_interval_s", 0.2)),
         )
         use_plate = True
-        max_polls = int(r.get("max_polls", 100))
         truth = r.get("truth_moo") or data.get("moo_csv")
         if truth:
             log.info(
@@ -147,8 +190,7 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
     ckpt = _resolve(cfg.get("checkpoint_dir", "runs/default"), root)
     sur = cfg.get("surrogate", {})
     async_cfg = cfg.get("async", {})
-    # Default poll interval: Vina needs wall-clock pacing; Replay can stay tight.
-    default_poll = 0.05 if executor_kind == "vina" else 0.0
+    default_poll = 0.05 if executor_kind in ("vina", "sim_dock") else 0.0
     return CampaignManager(
         library=library,
         executor=executor,
@@ -163,7 +205,6 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
         plate=plate,
         constraints=constraints,
         use_plate_layout=use_plate,
-        max_polls=max_polls,
         resume=resume,
         schema=schema,
         evaluator=evaluator,
@@ -205,11 +246,14 @@ def main(argv: list[str] | None = None) -> None:
         setup_logging(args.log_level)
         cfg = load_config(args.config)
         camp = build_from_config(cfg, resume=args.resume)
-        n_rounds = args.rounds if args.rounds is not None else int(cfg.get("n_rounds", 5))
-        history = camp.run(n_rounds)
-        out = Path(camp.checkpoint_dir) / "history.json"
-        out.write_text(json.dumps(history, indent=2), encoding="utf-8")
-        log.info("Done. checkpoint=%s labeled=%s", camp.checkpoint_dir, len(camp.store))
+        try:
+            n_rounds = args.rounds if args.rounds is not None else int(cfg.get("n_rounds", 5))
+            history = camp.run(n_rounds)
+            out = Path(camp.checkpoint_dir) / "history.json"
+            out.write_text(json.dumps(history, indent=2), encoding="utf-8")
+            log.info("Done. checkpoint=%s labeled=%s", camp.checkpoint_dir, len(camp.store))
+        finally:
+            camp.close()
 
 
 if __name__ == "__main__":
