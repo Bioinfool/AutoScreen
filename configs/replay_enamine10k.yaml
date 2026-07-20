@@ -1,0 +1,23 @@
+campaign_id: replay_enamine10k
+seed: 0
+executor: replay
+
+data:
+  library_csv: molpal/libraries/Enamine10k.csv.gz
+  fps_h5: molpal/libraries/Enamine10k.h5
+  moo_csv: molpal/data/Enamine10k_moo.csv.gz
+
+init_frac: 0.01
+batch_size: 100
+n_rounds: 5
+acquisition: greedy
+beta: 1.0
+checkpoint_dir: runs/replay_enamine10k
+
+surrogate:
+  n_estimators: 100
+
+objectives:
+  - activity
+  - qed
+  - sa_ease

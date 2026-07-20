@@ -1,0 +1,31 @@
+campaign_id: vina_demo
+seed: 0
+executor: vina
+
+data:
+  # Small demo library path; replace with your SMILES list for real runs
+  library_csv: molpal/libraries/Enamine10k.csv.gz
+  fps_h5: molpal/libraries/Enamine10k.h5
+  # Optional multi-objective side labels (QED/SA); docking comes from Vina
+  moo_csv: molpal/data/Enamine10k_moo.csv.gz
+
+init_frac: 0.002
+batch_size: 8
+n_rounds: 2
+acquisition: greedy
+beta: 1.0
+checkpoint_dir: runs/vina_demo
+
+vina:
+  receptor: null          # path to receptor .pdbqt (required for real runs)
+  box_center: [0.0, 0.0, 0.0]
+  box_size: [20.0, 20.0, 20.0]
+  exhaustiveness: 4
+  num_modes: 1
+  cpu: 4
+  vina_bin: vina          # AutoDock Vina executable on PATH
+  work_dir: runs/vina_work
+  # If receptor is missing, executor raises a clear error (tests skip)
+
+surrogate:
+  n_estimators: 50

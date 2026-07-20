@@ -1,0 +1,33 @@
+campaign_id: robot_mock_demo
+seed: 0
+executor: robot
+
+data:
+  library_csv: molpal/libraries/Enamine10k.csv.gz
+  fps_h5: molpal/libraries/Enamine10k.h5
+  moo_csv: molpal/data/Enamine10k_moo.csv.gz
+
+init_frac: 0.01
+batch_size: 80
+n_rounds: 3
+acquisition: ucb
+beta: 0.5
+checkpoint_dir: runs/robot_mock_demo
+
+plate:
+  n_experimental: 80
+  n_positive: 4
+  n_negative: 4
+  n_blank: 4
+  n_replicate: 4
+  diversity_lambda: 0.4
+  sa_feasibility_quantile: 0.1
+
+robot:
+  base_url: http://127.0.0.1:8080
+  timeout_s: 30.0
+  poll_interval_s: 0.2
+  max_polls: 100
+
+surrogate:
+  n_estimators: 100
