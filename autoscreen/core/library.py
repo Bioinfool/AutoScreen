@@ -9,7 +9,10 @@ from pathlib import Path
 import h5py
 import numpy as np
 
+from autoscreen.logging_utils import get_logger
+
 OBJECTIVE_NAMES = ("activity", "qed", "sa_ease")
+log = get_logger("library")
 
 
 @dataclass
@@ -68,16 +71,36 @@ def load_candidate_library(
     smis: list[str] = []
     rows: list[int] = []
     raw: list[tuple[float, float, float]] = []
+    n_moo = 0
+    n_moo_missing = 0
     with gzip.open(moo_csv, "rt") as fid:
         reader = csv.reader(fid)
         next(reader)
         for r in reader:
+            n_moo += 1
             smi = r[0]
             if smi not in smi_to_row:
+                n_moo_missing += 1
                 continue
             smis.append(smi)
             rows.append(smi_to_row[smi])
             raw.append((float(r[1]), float(r[2]), float(r[3])))
+
+    n_lib = len(lib_smis)
+    n_kept = len(smis)
+    if n_kept < n_lib or n_moo_missing:
+        log.warning(
+            "Aligned library to MOO labels: lib=%d moo=%d kept=%d "
+            "(dropped_from_lib=%d, moo_not_in_lib=%d). "
+            "pool_idx is the kept-row order, not original CSV line numbers.",
+            n_lib,
+            n_moo,
+            n_kept,
+            n_lib - n_kept,
+            n_moo_missing,
+        )
+    if n_kept == 0:
+        raise ValueError(f"No overlapping SMILES between {library_csv} and {moo_csv}")
 
     X = fps[rows].astype(np.float32)
     raw_arr = np.asarray(raw, dtype=np.float64)

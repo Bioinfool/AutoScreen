@@ -15,6 +15,8 @@ class PlateConfig:
     n_replicate: int = 4
     diversity_lambda: float = 0.4
     sa_feasibility_quantile: float = 0.1
+    rows: int = 8
+    cols: int = 12
 
     @property
     def plate_size(self) -> int:
@@ -25,6 +27,19 @@ class PlateConfig:
             + self.n_blank
             + self.n_replicate
         )
+
+    @property
+    def capacity(self) -> int:
+        return self.rows * self.cols
+
+    def validate(self) -> None:
+        if self.rows < 1 or self.cols < 1:
+            raise ValueError(f"Invalid plate geometry rows={self.rows} cols={self.cols}")
+        if self.plate_size > self.capacity:
+            raise ValueError(
+                f"plate_size={self.plate_size} exceeds capacity "
+                f"{self.rows}x{self.cols}={self.capacity}"
+            )
 
 
 def _tanimoto_to_set(fp: np.ndarray, fps_set: np.ndarray, pc_set: np.ndarray, pc_fp: float) -> np.ndarray:

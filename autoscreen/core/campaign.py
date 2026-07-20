@@ -97,6 +97,9 @@ class CampaignManager:
             self.n_obj, n_estimators=n_estimators, seed=seed
         )
 
+        if self.use_plate_layout:
+            self.plate.validate()
+
         if library.Y_hidden is not None:
             self.ref_point = make_ref_point(library.Y_hidden)
             gmask = pareto_mask(library.Y_hidden)
@@ -107,12 +110,25 @@ class CampaignManager:
             self.global_front_idx = set()
             self.global_hv = 1.0
 
-        if resume and self.state_path.exists() and self.store_path.exists():
+        if resume:
+            if not (self.state_path.exists() and self.store_path.exists()):
+                raise FileNotFoundError(
+                    f"Cannot resume: missing checkpoint under {self.checkpoint_dir}"
+                )
             self.state = CampaignState.load(self.state_path)
             self.store = ObservationStore.load(self.store_path)
-            log.info("Resumed campaign %s at round %s (%s labeled)",
-                     self.state.campaign_id, self.state.round, len(self.store))
+            log.info(
+                "Resumed campaign %s at round %s (%s labeled)",
+                self.state.campaign_id,
+                self.state.round,
+                len(self.store),
+            )
         else:
+            if self.state_path.exists() or self.store_path.exists():
+                raise FileExistsError(
+                    f"Checkpoint already exists at {self.checkpoint_dir}; "
+                    "pass resume=True / --resume, or choose a new checkpoint_dir"
+                )
             self.store = ObservationStore()
             self.state = self._bootstrap_state(campaign_id, seed)
             self._checkpoint()
@@ -144,6 +160,14 @@ class CampaignManager:
         jid = self.executor.submit(job)
         status = self.executor.wait(jid, max_polls=self.max_polls)
         self.store.add_many(status.observations)
+        completed = failed = qc_rej = 0
+        for o in status.observations:
+            if o.state is WellState.COMPLETED and o.qc_passed and o.kind is not ItemKind.BLANK:
+                completed += 1
+            elif o.state is WellState.FAILED:
+                failed += 1
+            elif o.state is WellState.QC_REJECTED:
+                qc_rej += 1
         hv_frac, recall = self._metrics()
         self.state.history.append(
             {
@@ -152,9 +176,9 @@ class CampaignManager:
                 "hv_frac": hv_frac,
                 "pareto_recall": recall,
                 "submitted": len(job.items),
-                "completed": sum(1 for o in status.observations if o.usable),
-                "failed": 0,
-                "qc_rejected": 0,
+                "completed": completed,
+                "failed": failed,
+                "qc_rejected": qc_rej,
                 "job_id": jid,
                 "acquisition": "init",
             }
@@ -210,17 +234,42 @@ class CampaignManager:
             idempotency_key=job_id,
         )
 
+    def _control_indices(self) -> set[int]:
+        return set(self.state.positive_idx) | set(self.state.negative_idx)
+
+    def _unavailable_mask(self) -> np.ndarray:
+        """Labeled experimental + permanently reserved control wells."""
+        labeled = self.store.mask(self.library.n)
+        for i in self._control_indices():
+            if 0 <= i < self.library.n:
+                labeled[i] = True
+        return labeled
+
     def _plate_items(self, rnd: int, exp_indices: list[int]) -> list[JobItem]:
-        letters = "ABCDEFGH"
+        self.plate.validate()
+        alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+        if self.plate.rows > len(alphabet):
+            raise ValueError(f"Plate rows={self.plate.rows} exceeds letter labels")
+        letters = alphabet[: self.plate.rows]
         items: list[JobItem] = []
         w = 0
 
         def wid() -> str:
             nonlocal w
-            s = f"{letters[w // 12]}{w % 12 + 1:02d}"
+            if w >= self.plate.capacity:
+                raise ValueError(
+                    f"Well index {w} exceeds plate capacity {self.plate.capacity}"
+                )
+            s = f"{letters[w // self.plate.cols]}{w % self.plate.cols + 1:02d}"
             w += 1
             return s
 
+        if len(exp_indices) > self.plate.n_experimental:
+            log.warning(
+                "Truncating experimental batch %d -> %d to fit plate layout",
+                len(exp_indices),
+                self.plate.n_experimental,
+            )
         exp_wells: list[str] = []
         for gidx in exp_indices[: self.plate.n_experimental]:
             well = wid()
@@ -278,7 +327,7 @@ class CampaignManager:
     def run_round(self) -> RoundRecord:
         rnd = self.state.round + 1
         rng = np.random.default_rng(self.state.seed * 1000 + rnd)
-        labeled = self.store.mask(self.library.n)
+        labeled = self._unavailable_mask()
         pool_idx = np.where(~labeled)[0]
         if len(pool_idx) == 0:
             raise RuntimeError("No unlabeled compounds left")

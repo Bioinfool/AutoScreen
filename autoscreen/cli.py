@@ -46,15 +46,24 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
         n_replicate=int(plate_cfg.get("n_replicate", 4)),
         diversity_lambda=float(plate_cfg.get("diversity_lambda", 0.4)),
         sa_feasibility_quantile=float(plate_cfg.get("sa_feasibility_quantile", 0.1)),
+        rows=int(plate_cfg.get("rows", 8)),
+        cols=int(plate_cfg.get("cols", 12)),
     )
-
-    # ~5% stock-outs for plate-aware / robot runs
-    stock_rng = np.random.default_rng(1234)
-    stock = stock_rng.random(library.n) >= 0.05
-    constraints = ConstraintManager(plate=plate, stock_available=stock)
 
     executor_kind = cfg.get("executor", "replay").lower()
     seed = int(cfg.get("seed", 0))
+
+    # Stock-outs only for robot (or when explicitly configured).
+    constraints_cfg = cfg.get("constraints", {})
+    stock_rate = constraints_cfg.get("stock_out_rate")
+    if stock_rate is None and executor_kind == "robot":
+        stock_rate = 0.05
+    stock = None
+    if stock_rate is not None and float(stock_rate) > 0:
+        stock_rng = np.random.default_rng(seed)
+        stock = stock_rng.random(library.n) >= float(stock_rate)
+        log.info("Applied stock_out_rate=%.3f (%d available)", float(stock_rate), int(stock.sum()))
+    constraints = ConstraintManager(plate=plate, stock_available=stock)
 
     if executor_kind == "replay":
         executor = ReplayExecutor(
@@ -98,6 +107,13 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
         )
         use_plate = True
         max_polls = int(r.get("max_polls", 100))
+        truth = r.get("truth_moo") or data.get("moo_csv")
+        if truth:
+            log.info(
+                "Robot campaigns require robot_mock truth aligned with moo_csv=%s "
+                "(set AUTOSCREEN_TRUTH_MOO on the mock service)",
+                truth,
+            )
     else:
         raise ValueError(f"Unknown executor: {executor_kind}")
 
@@ -128,8 +144,13 @@ def main(argv: list[str] | None = None) -> None:
 
     run_p = sub.add_parser("run", help="Run a campaign from a YAML config")
     run_p.add_argument("--config", required=True)
-    run_p.add_argument("--rounds", type=int, default=None, help="Override n_rounds")
-    run_p.add_argument("--resume", action="store_true")
+    run_p.add_argument(
+        "--rounds",
+        type=int,
+        default=None,
+        help="Number of additional acquisition rounds to run from the current state",
+    )
+    run_p.add_argument("--resume", action="store_true", help="Resume from checkpoint_dir")
     run_p.add_argument("--log-level", default="INFO")
 
     args = p.parse_args(argv)
