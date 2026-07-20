@@ -6,11 +6,28 @@ services:
     image: autoscreen:cpu
     container_name: autoscreen
     working_dir: /workspace
-    # Code and data are baked into the image (plug-and-play). Only campaign
-    # outputs are mounted back to the host so results survive the container.
     volumes:
       - ./runs:/workspace/runs
       - ./results:/workspace/results
+      - ./configs:/workspace/configs
+    environment:
+      AUTOSCREEN_ROBOT_URL: http://robot-mock:8080
+    depends_on:
+      - robot-mock
     stdin_open: true
     tty: true
     command: bash
+
+  robot-mock:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    image: autoscreen:cpu
+    container_name: autoscreen-robot-mock
+    working_dir: /workspace
+    command: uvicorn robot_mock.app:app --host 0.0.0.0 --port 8080
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./molpal/data:/workspace/molpal/data:ro
+      - ./molpal/libraries:/workspace/molpal/libraries:ro

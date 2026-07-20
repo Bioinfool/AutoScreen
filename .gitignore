@@ -26,6 +26,12 @@ molpal/libraries/*.h5
 
 # AutoScreen async campaign checkpoints / transient run dirs
 runs/
+autoscreen_legacy/
+
+# pytest / coverage
+.coverage
+htmlcov/
+.tox/
 
 # IDE / OS
 .vscode/
