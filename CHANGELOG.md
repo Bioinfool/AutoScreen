@@ -17,4 +17,4 @@
 - Vina campaign integration test
 
 ### Changed
-- Legacy multi-objective HV/Pareto plots moved to `results/legacy_multiobjective/`
+- Legacy multi-objective HV/Pareto plots archived under `docs/legacy_multiobjective/`
