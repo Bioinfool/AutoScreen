@@ -1,0 +1,23 @@
+campaign_id: replay_enamine50k
+seed: 0
+executor: replay
+
+data:
+  library_csv: data/Enamine50k.csv.gz
+  fps_h5: data/Enamine50k.h5
+  moo_csv: data/Enamine50k_moo.csv.gz
+
+init_frac: 0.01
+batch_size: 200
+n_rounds: 8
+acquisition: greedy
+beta: 1.0
+checkpoint_dir: runs/replay_enamine50k
+
+surrogate:
+  n_estimators: 100
+
+objectives:
+  - activity
+  - qed
+  - sa_ease

@@ -1,7 +1,12 @@
-"""Precompute Enamine10k fingerprint HDF5 (serial, no Ray).
+"""Precompute atom-pair fingerprint HDF5 for a library under data/.
 
-Uses hashed atom-pair fingerprints (radius 2, 2048 bits).
+Usage:
+  python scripts/prep_fps_serial.py --name Enamine10k
+  python scripts/prep_fps_serial.py --name Enamine50k
 """
+from __future__ import annotations
+
+import argparse
 import csv
 import gzip
 from pathlib import Path
@@ -37,9 +42,15 @@ def load_smis(library: Path) -> list[str]:
 
 
 def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--name", default="Enamine10k", help="Library stem under data/")
+    p.add_argument("--library", default=None, help="Override library csv.gz path")
+    p.add_argument("--output", default=None, help="Override output .h5 path")
+    args = p.parse_args()
+
     root = Path(__file__).resolve().parents[1]
-    library = root / "data" / "Enamine10k.csv.gz"
-    output = root / "data" / "Enamine10k.h5"
+    library = Path(args.library) if args.library else root / "data" / f"{args.name}.csv.gz"
+    output = Path(args.output) if args.output else root / "data" / f"{args.name}.h5"
 
     smis = load_smis(library)
     size = len(smis)
@@ -47,7 +58,7 @@ def main() -> None:
     invalid_idxs: set[int] = set()
     fps_rows: list[np.ndarray] = []
 
-    for idx, smi in enumerate(tqdm(smis, desc="Featurizing", unit="smi")):
+    for idx, smi in enumerate(tqdm(smis, desc=f"Featurizing {args.name}", unit="smi")):
         fp = featurize(smi)
         if fp is None:
             invalid_idxs.add(idx)
@@ -63,7 +74,7 @@ def main() -> None:
 
     print(f"Wrote {output} ({valid_size} fps, {len(invalid_idxs)} invalid)")
     if invalid_idxs:
-        print(f"invalid_idxs = {sorted(invalid_idxs)}")
+        print(f"invalid_idxs = {sorted(invalid_idxs)[:20]}{'...' if len(invalid_idxs) > 20 else ''}")
 
 
 if __name__ == "__main__":

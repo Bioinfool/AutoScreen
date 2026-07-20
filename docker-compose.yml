@@ -7,11 +7,13 @@ services:
     container_name: autoscreen
     working_dir: /workspace
     volumes:
+      - ./data:/workspace/data:ro
       - ./runs:/workspace/runs
       - ./results:/workspace/results
       - ./configs:/workspace/configs
     environment:
       AUTOSCREEN_ROBOT_URL: http://robot-mock:8080
+    # Only needed for robot executor campaigns; safe to keep for demos.
     depends_on:
       - robot-mock
     stdin_open: true
@@ -28,5 +30,7 @@ services:
     command: uvicorn robot_mock.app:app --host 0.0.0.0 --port 8080
     ports:
       - "8080:8080"
+    environment:
+      AUTOSCREEN_TRUTH_MOO: data/Enamine10k_moo.csv.gz
     volumes:
       - ./data:/workspace/data:ro

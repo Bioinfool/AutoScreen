@@ -1,12 +1,12 @@
-"""Build a multi-objective label table for Enamine10k.
+"""Build multi-objective label tables (dock + QED + SA).
 
-Objectives (raw values; direction handled downstream):
-  - dock : docking score from the precomputed score table (lower = better)
-  - qed  : QED drug-likeness (higher = better)
-  - sa   : synthetic accessibility (lower = easier to make)
-
-Output: data/Enamine10k_moo.csv.gz  with columns [smiles, dock, qed, sa]
+Usage:
+  python scripts/prep_moo_labels.py --name Enamine10k
+  python scripts/prep_moo_labels.py --name Enamine50k
 """
+from __future__ import annotations
+
+import argparse
 import csv
 import gzip
 import os
@@ -35,10 +35,14 @@ def load_scores(path: Path) -> dict[str, float]:
 
 
 def main() -> None:
+    p = argparse.ArgumentParser()
+    p.add_argument("--name", default="Enamine10k", help="Dataset stem under data/")
+    args = p.parse_args()
+
     root = Path(__file__).resolve().parents[1]
-    library = root / "data" / "Enamine10k.csv.gz"
-    scores_path = root / "data" / "Enamine10k_scores.csv.gz"
-    out_path = root / "data" / "Enamine10k_moo.csv.gz"
+    library = root / "data" / f"{args.name}.csv.gz"
+    scores_path = root / "data" / f"{args.name}_scores.csv.gz"
+    out_path = root / "data" / f"{args.name}_moo.csv.gz"
 
     dock = load_scores(scores_path)
 
@@ -49,7 +53,7 @@ def main() -> None:
 
     rows: list[tuple[str, float, float, float]] = []
     n_bad = 0
-    for smi in tqdm(smis, desc="QED/SA", unit="smi"):
+    for smi in tqdm(smis, desc=f"QED/SA {args.name}", unit="smi"):
         if smi not in dock:
             continue
         mol = Chem.MolFromSmiles(smi)
@@ -70,12 +74,13 @@ def main() -> None:
         writer.writerows(rows)
 
     print(f"Wrote {out_path} with {len(rows)} molecules ({n_bad} skipped)")
-    dvals = [r[1] for r in rows]
-    qvals = [r[2] for r in rows]
-    svals = [r[3] for r in rows]
-    print(f"dock: [{min(dvals):.2f}, {max(dvals):.2f}]")
-    print(f"qed : [{min(qvals):.3f}, {max(qvals):.3f}]")
-    print(f"sa  : [{min(svals):.2f}, {max(svals):.2f}]")
+    if rows:
+        dvals = [r[1] for r in rows]
+        qvals = [r[2] for r in rows]
+        svals = [r[3] for r in rows]
+        print(f"dock: [{min(dvals):.2f}, {max(dvals):.2f}]")
+        print(f"qed : [{min(qvals):.3f}, {max(qvals):.3f}]")
+        print(f"sa  : [{min(svals):.2f}, {max(svals):.2f}]")
 
 
 if __name__ == "__main__":

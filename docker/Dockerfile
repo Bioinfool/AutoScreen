@@ -14,11 +14,14 @@ COPY configs /workspace/configs
 COPY pyproject.toml /workspace/pyproject.toml
 COPY README.md /workspace/README.md
 
+# Smoke library baked into the image; compose also mounts ./data for larger sets.
 COPY data/Enamine10k.csv.gz /workspace/data/Enamine10k.csv.gz
 COPY data/Enamine10k_scores.csv.gz /workspace/data/Enamine10k_scores.csv.gz
 COPY data/Enamine10k_moo.csv.gz /workspace/data/Enamine10k_moo.csv.gz
 
-RUN pip install --no-cache-dir -e ".[robot,dev]" \
- && python /workspace/scripts/prep_fps_serial.py
+ENV AUTOSCREEN_TRUTH_MOO=data/Enamine10k_moo.csv.gz
+
+RUN pip install --no-cache-dir -e ".[robot,dev,prep]" \
+ && python /workspace/scripts/prep_fps_serial.py --name Enamine10k
 
 CMD ["bash"]

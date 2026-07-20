@@ -27,14 +27,21 @@ AutoScreen（代理模型 + 采集策略 + 约束）
 ## 快速开始
 
 ```bash
-pip install -e ".[robot,dev]"
-python scripts/prep_fps_serial.py          # 首次：预计算指纹
-python scripts/prep_moo_labels.py          # 首次：多目标标签（若尚未生成）
+pip install -e ".[robot,dev,prep]"
 
-# 离线 Replay 主动学习
+# 小库冒烟（~1 万）
+python scripts/prep_fps_serial.py --name Enamine10k
+python scripts/prep_moo_labels.py --name Enamine10k
 python -m autoscreen.cli run --config configs/replay_enamine10k.yaml
 
-# 机器人扩展：先起模拟服务，再跑孔板 campaign
+# 主评测库（~5 万，推荐）
+python scripts/prep_fps_serial.py --name Enamine50k
+python scripts/prep_moo_labels.py --name Enamine50k
+python -m autoscreen.cli run --config configs/replay_enamine50k.yaml
+
+# 机器人扩展：模拟服务的 truth 必须与 campaign 的 moo_csv 一致
+# PowerShell: $env:AUTOSCREEN_TRUTH_MOO="data/Enamine10k_moo.csv.gz"
+export AUTOSCREEN_TRUTH_MOO=data/Enamine10k_moo.csv.gz
 uvicorn robot_mock.app:app --host 0.0.0.0 --port 8080
 python -m autoscreen.cli run --config configs/robot_mock.yaml
 ```
@@ -46,14 +53,20 @@ docker compose up --build -d robot-mock
 docker compose run --rm autoscreen python -m autoscreen.cli run --config configs/robot_mock.yaml
 ```
 
-## 数据
+## 数据与库规模
 
-示例库与标签位于 [`data/`](data/)：
+示例数据在 [`data/`](data/)：
 
-- `Enamine10k.csv.gz`：候选分子 SMILES
-- `Enamine10k_scores.csv.gz`：预计算对接分数（Replay Oracle）
-- `Enamine10k_moo.csv.gz`：多目标标签（dock / QED / SA）
-- `Enamine10k.h5`：指纹缓存（本地生成，不提交仓库）
+| 规模 | 库文件 | 用途 |
+|------|--------|------|
+| ~1 万 | `Enamine10k.*` | 冒烟 / 快速调试（仓库自带） |
+| ~5 万 | `Enamine50k.*` | **主评测候选库（推荐）** |
+
+每种规模包含：`*.csv.gz`（SMILES）、`*_scores.csv.gz`（预计算对接分）、`*_moo.csv.gz`（dock/QED/SA）、`*.h5`（指纹，本地用 `prep_fps_serial.py` 生成，不进 git）。
+
+`pool_idx` 是「库与 MOO 对齐后」的下标，不是原始 CSV 行号；换库时请同步改 YAML 的三条路径，并让 `robot_mock` 的 `AUTOSCREEN_TRUTH_MOO` 指向同一份 `*_moo.csv.gz`。
+
+更大库（如百万级 AmpC）可按同样格式放入 `data/`，改 YAML 即可，无需改代码。
 
 ## 叙事边界
 
