@@ -97,12 +97,6 @@ python scripts/run_vina_closed_loop.py
 python scripts/bench_single_obj.py --suite both --rounds 5 --batch-size 50
 ```
 
-## 叙事边界
-
-- 可以说：主动学习虚拟筛选 + 可插拔执行器接口 + 异步编排骨架（JobStore）  
-- 不可以说：已完成真实机器人药筛；不可以说 Vina 路径已是生产级异步对接
-- SimulatedDock 吞吐结果是调度代理实验，不是真实对接耗时
-
 ## 开发与测试
 
 ```bash
