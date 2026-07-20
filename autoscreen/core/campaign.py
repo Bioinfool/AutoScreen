@@ -83,6 +83,7 @@ class CampaignManager:
         poll_interval_s: float = 0.0,
         max_wall_time_s: float | None = None,
         max_idle_time_s: float | None = None,
+        pending_penalty: float = 0.5,
     ):
         if hasattr(library, "Y_hidden") and getattr(library, "Y_hidden") is not None:
             raise ValueError(
@@ -101,6 +102,7 @@ class CampaignManager:
         self.poll_interval_s = float(poll_interval_s)
         self.max_wall_time_s = max_wall_time_s
         self.max_idle_time_s = max_idle_time_s
+        self.pending_penalty = float(pending_penalty)
         self.use_plate_layout = use_plate_layout
         self.plate = plate or PlateConfig()
         self.constraints = constraints or ConstraintManager(self.plate)
@@ -525,6 +527,16 @@ class CampaignManager:
     def _is_acquisition_job(self, rec: JobRecord) -> bool:
         return rec.job.meta.get("acquisition", "") != "init"
 
+    def _pending_fps(self, open_jobs: list[JobRecord]) -> np.ndarray | None:
+        idxs: list[int] = []
+        for rec in open_jobs:
+            for it in rec.job.items:
+                if it.kind is ItemKind.EXPERIMENTAL and it.pool_idx >= 0:
+                    idxs.append(int(it.pool_idx))
+        if not idxs:
+            return None
+        return self.library.X[np.asarray(sorted(set(idxs)), dtype=int)]
+
     def _maybe_submit(self) -> bool:
         open_jobs = self.jobs.open_jobs()
         if len(open_jobs) >= self.max_active_jobs:
@@ -551,18 +563,23 @@ class CampaignManager:
         free_jobs = self.max_active_jobs - len(open_jobs)
         k = min(k, len(feas_local), max(1, free_jobs * k))
 
+        pool = avail[feas_local]
         ref = self._acquisition_ref_point(Y)
         rng = np.random.default_rng(
             self.state.seed * 1000 + self.state.next_batch_seq + len(self.jobs)
         )
+        pending_fps = self._pending_fps(open_jobs)
         sel = self.acquisition.select(
-            avail[feas_local],
+            pool,
             means[feas_local],
             stds[feas_local],
             k,
             labeled_Y=Y,
             ref_point=ref,
             rng=rng,
+            cand_fps=self.library.X[pool],
+            pending_fps=pending_fps,
+            pending_penalty=self.pending_penalty,
         )
         chosen = list(sel.pool_indices)
         if self.use_plate_layout and sel.scores:

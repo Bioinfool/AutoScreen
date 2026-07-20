@@ -18,5 +18,7 @@ jobs:
         run: |
           pip install -e ".[robot,dev,prep]"
           python scripts/prep_fps_serial.py --name Enamine10k
+      - name: Ruff (critical)
+        run: ruff check autoscreen robot_mock tests scripts --select E9,F63,F7,F82
       - name: Pytest
-        run: pytest -q --timeout=180
+        run: pytest -q --timeout=180 --cov=autoscreen --cov-report=term-missing:skip-covered

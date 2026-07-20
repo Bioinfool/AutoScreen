@@ -9,12 +9,12 @@ import pytest
 from autoscreen.core.benchmark import BenchmarkEvaluator
 from autoscreen.core.campaign import CampaignManager
 from autoscreen.core.candidate_state import CandidatePhase, CandidateStateStore
-from autoscreen.core.jobs import JobLifecycle, JobRecord, JobStore
+from autoscreen.core.jobs import JobLifecycle
 from autoscreen.core.library import load_candidate_library
 from autoscreen.core.objectives import parse_objective_schema
 from autoscreen.core.observations import AggregateConfig, ObservationStore
 from autoscreen.core.oracle import load_moo_oracle
-from autoscreen.core.types import ItemKind, Job, JobItem, JobStatus, Observation, WellState
+from autoscreen.core.types import ItemKind, Job, JobStatus, Observation, WellState
 from autoscreen.executors.base import Executor
 from autoscreen.executors.replay import ReplayExecutor
 from autoscreen.executors.vina import VinaConfig, VinaExecutor

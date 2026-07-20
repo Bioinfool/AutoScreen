@@ -181,6 +181,7 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
             if async_cfg.get("max_idle_time_s") is not None
             else None
         ),
+        pending_penalty=float(async_cfg.get("pending_penalty", cfg.get("pending_penalty", 0.5))),
     )
 
 

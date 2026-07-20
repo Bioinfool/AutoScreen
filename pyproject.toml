@@ -22,7 +22,12 @@ dependencies = [
 [project.optional-dependencies]
 robot = ["fastapi>=0.110", "uvicorn>=0.27"]
 prep = ["rdkit>=2023.3.1"]
-dev = ["pytest>=7.4", "pytest-timeout>=2.2"]
+dev = [
+  "pytest>=7.4",
+  "pytest-timeout>=2.2",
+  "pytest-cov>=4.1",
+  "ruff>=0.4",
+]
 
 [project.scripts]
 autoscreen = "autoscreen.cli:main"
@@ -33,3 +38,11 @@ include = ["autoscreen*", "robot_mock*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = ["E501"]

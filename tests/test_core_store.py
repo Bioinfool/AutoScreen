@@ -1,7 +1,5 @@
 from pathlib import Path
 
-import numpy as np
-
 from autoscreen.core.library import load_candidate_library
 from autoscreen.core.model import MultiOutputRFSurrogate
 from autoscreen.core.observations import ObservationStore

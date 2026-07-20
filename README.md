@@ -74,9 +74,17 @@ docker compose run --rm autoscreen python -m autoscreen.cli run --config configs
 - **隐藏标签**只存在于 `ReplayExecutor` 的 oracle 与可选的 `BenchmarkEvaluator`；Campaign 不得持有 `Y_hidden`。
 - **Campaign** 以 `step()` 轮询：`next_batch_seq` 保证全局唯一 `job_id`/`item_id`；提交采用 PREPARED→远程→SUBMITTED 两阶段持久化；按 Job 分组统计 history。
 - **VinaExecutor** 按分子异步对接（线程池），`poll` 非阻塞并返回部分结果；支持单分子超时与结果缓存。
+- 孔板对照必须由配置显式提供，不会从 QED/隐藏标签推断。
 - **Benchmark** 单目标主指标为 Top-0.1%/1% recall、EF、BEDROC；HV/Pareto 仅在多昂贵目标时启用。
 - **重复孔**经均值/中位数聚合后进入训练集；活性标准差超阈则 aggregate QC 拒绝。
 - **失败/QC** 默认可重试一次（`RETRYABLE`），超限后永久 `FAILED` / `QC_REJECTED`。
+- **Pending-aware**：并发 Job 中的分子本身不可再选；对其结构邻居施加 Tanimoto 局部惩罚（非完整 Kriging believer）。
+
+单目标基准对比（sync vs async）：
+
+```bash
+python scripts/bench_single_obj.py --rounds 3 --batch-size 50
+```
 
 ## 叙事边界
 

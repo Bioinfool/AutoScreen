@@ -15,6 +15,38 @@ def _normalize(Y: np.ndarray, range_: tuple[np.ndarray, np.ndarray]) -> np.ndarr
     return (Y - lo) / span
 
 
+def max_tanimoto_to_refs(fps: np.ndarray, ref_fps: np.ndarray) -> np.ndarray:
+    """For each row in ``fps``, max Tanimoto similarity to any row in ``ref_fps``.
+
+    Uses elementwise products (no large ``@``) for Windows numerical stability.
+    """
+    if ref_fps is None or len(ref_fps) == 0 or len(fps) == 0:
+        return np.zeros(len(fps), dtype=float)
+    fps = np.asarray(fps, dtype=float)
+    ref = np.asarray(ref_fps, dtype=float)
+    pc = fps.sum(axis=1)
+    max_sim = np.zeros(fps.shape[0], dtype=float)
+    for j in range(ref.shape[0]):
+        rj = ref[j]
+        inter = (fps * rj).sum(axis=1)
+        union = pc + float(rj.sum()) - inter
+        union = np.where(union > 0, union, 1.0)
+        max_sim = np.maximum(max_sim, inter / union)
+    return max_sim
+
+
+def apply_pending_penalty(
+    scores: np.ndarray,
+    cand_fps: np.ndarray | None,
+    pending_fps: np.ndarray | None,
+    lam: float = 0.5,
+) -> np.ndarray:
+    """Down-rank candidates similar to in-flight compounds: score - lam * max_sim."""
+    if cand_fps is None or pending_fps is None or lam <= 0 or len(pending_fps) == 0:
+        return scores
+    return scores - float(lam) * max_tanimoto_to_refs(cand_fps, pending_fps)
+
+
 class AcquisitionStrategy(ABC):
     name: str = "base"
 
@@ -29,6 +61,9 @@ class AcquisitionStrategy(ABC):
         labeled_Y: np.ndarray | None = None,
         ref_point: np.ndarray | None = None,
         rng: np.random.Generator | None = None,
+        cand_fps: np.ndarray | None = None,
+        pending_fps: np.ndarray | None = None,
+        pending_penalty: float = 0.5,
     ) -> BatchSelection:
         ...
 
@@ -57,7 +92,12 @@ class GreedyAcquisition(AcquisitionStrategy):
             norm_range = (labeled_Y.min(0), labeled_Y.max(0))
         w = self.weights if self.weights is not None else np.ones(means.shape[1]) / means.shape[1]
         Yn = _normalize(means, norm_range)
-        scores = (Yn * w).sum(axis=1)
+        scores = apply_pending_penalty(
+            (Yn * w).sum(axis=1),
+            kwargs.get("cand_fps"),
+            kwargs.get("pending_fps"),
+            float(kwargs.get("pending_penalty", 0.5)),
+        )
         order = np.argsort(-scores)[:k]
         return BatchSelection(
             pool_indices=pool_idx[order].tolist(),
@@ -67,16 +107,13 @@ class GreedyAcquisition(AcquisitionStrategy):
 
 
 class WeightedAcquisition(AcquisitionStrategy):
-    """ParEGO-style: random scalarization weights each call, then greedy."""
-
     name = "weighted"
 
     def select(self, pool_idx, means, stds, k, **kwargs) -> BatchSelection:
         rng = kwargs.get("rng") or np.random.default_rng(0)
         w = rng.random(means.shape[1])
         w = w / w.sum()
-        inner = GreedyAcquisition(weights=w)
-        sel = inner.select(pool_idx, means, stds, k, **kwargs)
+        sel = GreedyAcquisition(weights=w).select(pool_idx, means, stds, k, **kwargs)
         sel.strategy = self.name
         sel.meta = {"weights": w.tolist()}
         return sel
@@ -97,7 +134,12 @@ class UCBAcquisition(AcquisitionStrategy):
             norm_range = (labeled_Y.min(0), labeled_Y.max(0))
         w = self.weights if self.weights is not None else np.ones(means.shape[1]) / means.shape[1]
         Yn = _normalize(means + self.beta * stds, norm_range)
-        scores = (Yn * w).sum(axis=1)
+        scores = apply_pending_penalty(
+            (Yn * w).sum(axis=1),
+            kwargs.get("cand_fps"),
+            kwargs.get("pending_fps"),
+            float(kwargs.get("pending_penalty", 0.5)),
+        )
         order = np.argsort(-scores)[:k]
         return BatchSelection(
             pool_indices=pool_idx[order].tolist(),
@@ -108,8 +150,6 @@ class UCBAcquisition(AcquisitionStrategy):
 
 
 class ParetoHVIAcquisition(AcquisitionStrategy):
-    """Greedy hypervolume improvement on optimistic means+beta*std."""
-
     name = "pareto"
 
     def __init__(self, beta: float = 0.5, candidate_cap: int = 400):
@@ -122,8 +162,14 @@ class ParetoHVIAcquisition(AcquisitionStrategy):
         if ref_point is None:
             raise ValueError("ParetoHVIAcquisition requires ref_point")
         opt = means + self.beta * stds
+        scores = apply_pending_penalty(
+            opt.sum(axis=1),
+            kwargs.get("cand_fps"),
+            kwargs.get("pending_fps"),
+            float(kwargs.get("pending_penalty", 0.5)),
+        )
         if len(pool_idx) > self.candidate_cap:
-            keep = np.argsort(-opt.sum(axis=1))[: self.candidate_cap]
+            keep = np.argsort(-scores)[: self.candidate_cap]
         else:
             keep = np.arange(len(pool_idx))
         cand = keep.tolist()
