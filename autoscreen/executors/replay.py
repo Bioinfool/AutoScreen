@@ -1,4 +1,4 @@
-"""Offline oracle executor: reveals hidden multi-objective labels for submitted items."""
+"""Offline oracle executor — owns hidden labels; Campaign never sees the oracle."""
 from __future__ import annotations
 
 import time
@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from autoscreen.core.library import CandidateLibrary
+from autoscreen.core.oracle import ArrayLabelOracle
 from autoscreen.core.types import ItemKind, Job, JobStatus, Observation, WellState
 from autoscreen.executors.base import Executor
 
@@ -21,32 +21,33 @@ class _JobRec:
 
 
 class ReplayExecutor(Executor):
-    """Looks up hidden labels from CandidateLibrary.Y_hidden (maximize convention)."""
+    """Reveals expensive objectives from a private LabelOracle."""
 
     kind = "replay"
 
     def __init__(
         self,
-        library: CandidateLibrary,
+        oracle: ArrayLabelOracle,
         activity_noise: float = 0.0,
         fail_rate: float = 0.0,
         qc_reject_rate: float = 0.0,
         min_latency: int = 1,
         max_latency: int = 1,
         seed: int = 0,
+        # Staggered completion for async / partial-result tests
+        stagger: bool = False,
     ):
-        if library.Y_hidden is None:
-            raise ValueError("ReplayExecutor requires CandidateLibrary.Y_hidden")
-        self.library = library
+        self.oracle = oracle
         self.activity_noise = activity_noise
         self.fail_rate = fail_rate
         self.qc_reject_rate = qc_reject_rate
         self.min_latency = min_latency
-        self.max_latency = max_latency
+        self.max_latency = max_latency if not stagger else max(max_latency, len(oracle.Y) and 3)
         self.rng = np.random.default_rng(seed)
         self._jobs: dict[str, _JobRec] = {}
         self._idempotency: dict[str, str] = {}
-        self._act_scale = float(np.std(library.Y_hidden[:, 0])) or 1.0
+        act = oracle.expensive_array()[:, 0]
+        self._act_scale = float(np.std(act)) or 1.0
 
     def submit(self, job: Job) -> str:
         key = job.idempotency_key or job.job_id
@@ -61,7 +62,7 @@ class ReplayExecutor(Executor):
         self._idempotency[key] = job_id
         return job_id
 
-    def _finalize(self, job: Job, item) -> Observation:
+    def _finalize(self, item) -> Observation:
         common = dict(
             smiles=item.smiles,
             pool_idx=item.pool_idx,
@@ -81,18 +82,23 @@ class ReplayExecutor(Executor):
                 values=None, state=WellState.FAILED, qc_passed=False,
                 message="simulated failure", **common,
             )
-        base = self.library.Y_hidden[item.pool_idx].astype(float).copy()
-        if self.activity_noise > 0:
+        base = np.asarray(self.oracle.lookup_expensive(item.pool_idx), dtype=float)
+        if self.activity_noise > 0 and len(base):
             base[0] += self.rng.normal(0.0, self.activity_noise * self._act_scale)
         qc = self.rng.random() >= self.qc_reject_rate
         state = WellState.COMPLETED if qc else WellState.QC_REJECTED
         return Observation(
             values=base.tolist(), state=state, qc_passed=qc,
             message="ok" if qc else "qc rejected",
-            raw={"dock_style": True}, **common,
+            raw={}, **common,
         )
 
     def poll(self, job_id: str) -> JobStatus:
+        if job_id not in self._jobs:
+            raise KeyError(
+                f"Unknown job_id={job_id}. In-process ReplayExecutor state is not "
+                "shared across processes; resume must re-submit via JobStore."
+            )
         rec = self._jobs[job_id]
         rec.tick += 1
         pending = 0
@@ -100,31 +106,31 @@ class ReplayExecutor(Executor):
             if it.item_id in rec.results:
                 continue
             if rec.tick >= rec.ready_at[it.item_id]:
-                rec.results[it.item_id] = self._finalize(rec.job, it)
+                rec.results[it.item_id] = self._finalize(it)
             else:
                 pending += 1
-        obs = list(rec.results.values())
         return JobStatus(
             job_id=job_id,
             done=pending == 0,
-            observations=obs,
+            observations=list(rec.results.values()),
             n_pending=pending,
             round=rec.job.round,
         )
 
     def cancel(self, job_id: str) -> None:
-        if job_id in self._jobs:
-            rec = self._jobs[job_id]
-            for it in rec.job.items:
-                if it.item_id not in rec.results:
-                    rec.results[it.item_id] = Observation(
-                        smiles=it.smiles,
-                        pool_idx=it.pool_idx,
-                        values=None,
-                        state=WellState.CANCELLED,
-                        qc_passed=False,
-                        source=self.kind,
-                        item_id=it.item_id,
-                        kind=it.kind,
-                        message="cancelled",
-                    )
+        if job_id not in self._jobs:
+            return
+        rec = self._jobs[job_id]
+        for it in rec.job.items:
+            if it.item_id not in rec.results:
+                rec.results[it.item_id] = Observation(
+                    smiles=it.smiles,
+                    pool_idx=it.pool_idx,
+                    values=None,
+                    state=WellState.CANCELLED,
+                    qc_passed=False,
+                    source=self.kind,
+                    item_id=it.item_id,
+                    kind=it.kind,
+                    message="cancelled",
+                )

@@ -1,4 +1,4 @@
-"""Batch feasibility and diversity constraints for plate-aware selection."""
+"""Batch feasibility and diversity constraints (static properties + stock)."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -83,26 +83,33 @@ def greedy_maxmin(
 
 
 class ConstraintManager:
-    """Filter infeasible compounds and optionally re-rank with diversity."""
+    """Filter using static properties (not surrogate predictions of QED/SA)."""
 
     def __init__(
         self,
         plate: PlateConfig | None = None,
         stock_available: np.ndarray | None = None,
+        static_sa_ease: np.ndarray | None = None,
     ):
         self.plate = plate or PlateConfig()
         self.stock_available = stock_available
+        self.static_sa_ease = static_sa_ease
 
     def feasible_mask(
         self,
         pool_local_n: int,
-        pred_sa_ease: np.ndarray | None = None,
         pool_global_idx: np.ndarray | None = None,
+        **_ignored,
     ) -> np.ndarray:
         feasible = np.ones(pool_local_n, dtype=bool)
-        if pred_sa_ease is not None and self.plate.sa_feasibility_quantile > 0:
-            thresh = np.quantile(pred_sa_ease, self.plate.sa_feasibility_quantile)
-            feasible &= pred_sa_ease >= thresh
+        if (
+            self.static_sa_ease is not None
+            and pool_global_idx is not None
+            and self.plate.sa_feasibility_quantile > 0
+        ):
+            vals = self.static_sa_ease[pool_global_idx]
+            thresh = np.quantile(self.static_sa_ease, self.plate.sa_feasibility_quantile)
+            feasible &= vals >= thresh
         if self.stock_available is not None and pool_global_idx is not None:
             feasible &= self.stock_available[pool_global_idx].astype(bool)
         if not feasible.any():

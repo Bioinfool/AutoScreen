@@ -5,23 +5,26 @@ from pathlib import Path
 import pytest
 
 from autoscreen.core.library import load_candidate_library
+from autoscreen.core.oracle import load_moo_oracle
 from autoscreen.core.types import ItemKind, Job, JobItem
 from autoscreen.executors.replay import ReplayExecutor
 from autoscreen.executors.vina import VinaConfig, VinaExecutor
 
 
-def _lib():
+def _lib_and_oracle():
     root = Path(__file__).resolve().parents[1]
-    return load_candidate_library(
+    lib = load_candidate_library(
         root / "data/Enamine10k.csv.gz",
         root / "data/Enamine10k.h5",
-        root / "data/Enamine10k_moo.csv.gz",
+        moo_csv=root / "data/Enamine10k_moo.csv.gz",
     )
+    oracle, _ = load_moo_oracle(root / "data/Enamine10k_moo.csv.gz", lib.smis, schema=lib.schema)
+    return lib, oracle
 
 
 def test_replay_executor_contract():
-    lib = _lib()
-    ex = ReplayExecutor(lib, seed=1, fail_rate=0.0, qc_reject_rate=0.0)
+    lib, oracle = _lib_and_oracle()
+    ex = ReplayExecutor(oracle, seed=1, fail_rate=0.0, qc_reject_rate=0.0)
     items = [
         JobItem(item_id="a", smiles=lib.smis[0], pool_idx=0, kind=ItemKind.EXPERIMENTAL),
         JobItem(item_id="b", smiles=lib.smis[1], pool_idx=1, kind=ItemKind.EXPERIMENTAL),
@@ -40,6 +43,7 @@ def test_replay_executor_contract():
     assert status.done
     assert len(status.observations) == 2
     assert all(o.usable for o in status.observations)
+    assert all(len(o.values) == 1 for o in status.observations)
 
 
 def test_vina_missing_receptor_raises():

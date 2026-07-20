@@ -35,5 +35,23 @@ robot:
 constraints:
   stock_out_rate: 0.05
 
+objectives:
+  - name: activity
+    kind: expensive
+static_properties:
+  - name: qed
+    kind: static
+  - name: sa_ease
+    kind: static
+
+controls:
+  positive_idx: [0, 1, 2, 3]
+  negative_idx: [4, 5, 6, 7]
+
+async:
+  max_active_jobs: 1
+
+benchmark: true
+
 surrogate:
   n_estimators: 100

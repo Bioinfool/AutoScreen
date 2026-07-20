@@ -35,8 +35,9 @@ def load_truth_moo(path: Path | None = None) -> dict[int, list[float]]:
         reader = csv.reader(fid)
         next(reader)
         for i, r in enumerate(reader):
-            dock, qed, sa = float(r[1]), float(r[2]), float(r[3])
-            truth[i] = [-dock, qed, -sa]
+            dock = float(r[1])
+            # Expensive objective only (activity = -dock). QED/SA stay on the library.
+            truth[i] = [-dock]
     return truth
 
 

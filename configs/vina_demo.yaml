@@ -14,6 +14,15 @@ acquisition: greedy
 beta: 1.0
 checkpoint_dir: runs/vina_demo
 
+objectives:
+  - name: activity
+    kind: expensive
+static_properties:
+  - name: qed
+    kind: static
+  - name: sa_ease
+    kind: static
+
 vina:
   receptor: null
   box_center: [0.0, 0.0, 0.0]
@@ -23,6 +32,9 @@ vina:
   cpu: 4
   vina_bin: vina
   work_dir: runs/vina_work
+
+async:
+  max_active_jobs: 1
 
 surrogate:
   n_estimators: 50

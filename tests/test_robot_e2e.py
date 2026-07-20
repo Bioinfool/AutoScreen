@@ -4,9 +4,11 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from autoscreen.core.benchmark import BenchmarkEvaluator
 from autoscreen.core.campaign import CampaignManager
 from autoscreen.core.constraints import ConstraintManager, PlateConfig
 from autoscreen.core.library import load_candidate_library
+from autoscreen.core.oracle import load_moo_oracle
 from autoscreen.core.types import ItemKind, Job, JobStatus, Observation, WellState
 from autoscreen.executors.base import Executor
 from autoscreen.protocol.v1 import PROTOCOL_VERSION, plate_submit_payload
@@ -54,11 +56,11 @@ def test_robot_protocol_submit_and_poll(robot_client):
             break
     assert done
     assert st["results"][0]["state"] in ("COMPLETED", "FAILED", "QC_REJECTED")
+    if st["results"][0]["values"] is not None:
+        assert len(st["results"][0]["values"]) == 1
 
 
 class ASGIRobotExecutor(Executor):
-    """RobotExecutor stand-in that uses FastAPI TestClient (sync ASGI)."""
-
     kind = "robot"
 
     def __init__(self, client: TestClient):
@@ -111,8 +113,9 @@ def test_robot_campaign_http(tmp_path, robot_client):
     lib = load_candidate_library(
         root / "data/Enamine10k.csv.gz",
         root / "data/Enamine10k.h5",
-        root / "data/Enamine10k_moo.csv.gz",
+        moo_csv=root / "data/Enamine10k_moo.csv.gz",
     )
+    oracle, _ = load_moo_oracle(root / "data/Enamine10k_moo.csv.gz", lib.smis, schema=lib.schema)
     plate = PlateConfig(n_experimental=20, n_positive=2, n_negative=2, n_blank=2, n_replicate=2)
     ex = ASGIRobotExecutor(robot_client)
     camp = CampaignManager(
@@ -126,10 +129,15 @@ def test_robot_campaign_http(tmp_path, robot_client):
         checkpoint_dir=tmp_path / "robot_ckpt",
         n_estimators=15,
         plate=plate,
-        constraints=ConstraintManager(plate=plate),
+        constraints=ConstraintManager(plate=plate, static_sa_ease=lib.static_col("sa_ease")),
         use_plate_layout=True,
         max_polls=20,
         beta=0.5,
+        evaluator=BenchmarkEvaluator(oracle),
+        max_active_jobs=1,
+        schema=lib.schema,
+        positive_idx=[0, 1],
+        negative_idx=[2, 3],
     )
     hist = camp.run(1)
     assert camp.state.round == 1

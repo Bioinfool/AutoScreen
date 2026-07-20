@@ -1,26 +1,32 @@
-"""Candidate molecule library aligned with fingerprints and optional MOO labels."""
+"""Candidate molecule library: SMILES, fingerprints, and static properties only."""
 from __future__ import annotations
 
 import csv
 import gzip
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
 
+from autoscreen.core.objectives import ObjectiveSchema, default_schema
+from autoscreen.core.oracle import filter_library_to_moo_order, load_moo_oracle
 from autoscreen.logging_utils import get_logger
 
-OBJECTIVE_NAMES = ("activity", "qed", "sa_ease")
 log = get_logger("library")
 
 
 @dataclass
 class CandidateLibrary:
+    """Decision-layer library. Must never carry hidden expensive labels."""
+
     smis: list[str]
     X: np.ndarray  # (n, n_bits)
-    Y_hidden: np.ndarray | None = None  # maximize convention; None if unknown
-    raw: np.ndarray | None = None  # original dock/qed/sa if available
+    static_Y: np.ndarray | None = None  # (n, n_static)
+    static_names: tuple[str, ...] = ()
+    schema: ObjectiveSchema = field(default_factory=default_schema)
+    meta: dict[str, Any] = field(default_factory=dict)
 
     @property
     def n(self) -> int:
@@ -32,9 +38,13 @@ class CandidateLibrary:
 
     @property
     def n_objectives(self) -> int:
-        if self.Y_hidden is None:
-            return 0
-        return int(self.Y_hidden.shape[1])
+        """Number of expensive objectives optimized by the surrogate."""
+        return self.schema.n_expensive
+
+    def static_col(self, name: str) -> np.ndarray:
+        if self.static_Y is None or name not in self.static_names:
+            raise KeyError(f"Static property {name!r} not on library")
+        return self.static_Y[:, self.static_names.index(name)]
 
     def smiles_at(self, idxs: list[int] | np.ndarray) -> list[str]:
         return [self.smis[int(i)] for i in idxs]
@@ -46,8 +56,17 @@ class CandidateLibrary:
 def load_candidate_library(
     library_csv: str | Path,
     fps_h5: str | Path,
+    *,
     moo_csv: str | Path | None = None,
+    schema: ObjectiveSchema | None = None,
 ) -> CandidateLibrary:
+    """Load fingerprints (+ optional static props from MOO CSV).
+
+    When ``moo_csv`` is provided, the library is filtered/reordered to the MOO
+    overlap order and QED/SA (per schema.static) are attached as ``static_Y``.
+    Docking / activity labels are **not** stored on the library.
+    """
+    schema = schema or default_schema()
     library_csv = Path(library_csv)
     fps_h5 = Path(fps_h5)
 
@@ -65,44 +84,34 @@ def load_candidate_library(
         )
 
     if moo_csv is None:
-        return CandidateLibrary(smis=lib_smis, X=fps.astype(np.float32))
-
-    smi_to_row = {smi: i for i, smi in enumerate(lib_smis)}
-    smis: list[str] = []
-    rows: list[int] = []
-    raw: list[tuple[float, float, float]] = []
-    n_moo = 0
-    n_moo_missing = 0
-    with gzip.open(moo_csv, "rt") as fid:
-        reader = csv.reader(fid)
-        next(reader)
-        for r in reader:
-            n_moo += 1
-            smi = r[0]
-            if smi not in smi_to_row:
-                n_moo_missing += 1
-                continue
-            smis.append(smi)
-            rows.append(smi_to_row[smi])
-            raw.append((float(r[1]), float(r[2]), float(r[3])))
-
-    n_lib = len(lib_smis)
-    n_kept = len(smis)
-    if n_kept < n_lib or n_moo_missing:
-        log.warning(
-            "Aligned library to MOO labels: lib=%d moo=%d kept=%d "
-            "(dropped_from_lib=%d, moo_not_in_lib=%d). "
-            "pool_idx is the kept-row order, not original CSV line numbers.",
-            n_lib,
-            n_moo,
-            n_kept,
-            n_lib - n_kept,
-            n_moo_missing,
+        return CandidateLibrary(
+            smis=lib_smis,
+            X=fps.astype(np.float32),
+            schema=schema,
         )
-    if n_kept == 0:
-        raise ValueError(f"No overlapping SMILES between {library_csv} and {moo_csv}")
 
-    X = fps[rows].astype(np.float32)
-    raw_arr = np.asarray(raw, dtype=np.float64)
-    Y = np.column_stack([-raw_arr[:, 0], raw_arr[:, 1], -raw_arr[:, 2]])
-    return CandidateLibrary(smis=smis, X=X, Y_hidden=Y, raw=raw_arr)
+    moo_csv = Path(moo_csv)
+    smis, X = filter_library_to_moo_order(lib_smis, fps, moo_csv)
+    # Build oracle only to extract static columns; discard oracle handle here.
+    _oracle, static_Y = load_moo_oracle(moo_csv, lib_smis, schema=schema)
+    if len(smis) != static_Y.shape[0]:
+        raise RuntimeError("Internal error: static_Y / library length mismatch")
+
+    n_dropped = len(lib_smis) - len(smis)
+    if n_dropped:
+        log.warning(
+            "Aligned library to MOO for static props: lib=%d kept=%d dropped=%d. "
+            "pool_idx is kept-row order. Expensive labels are NOT stored on the library.",
+            len(lib_smis),
+            len(smis),
+            n_dropped,
+        )
+
+    return CandidateLibrary(
+        smis=smis,
+        X=X,
+        static_Y=static_Y,
+        static_names=schema.static_names,
+        schema=schema,
+        meta={"moo_csv": str(moo_csv), "source_library": str(library_csv)},
+    )

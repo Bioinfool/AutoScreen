@@ -152,9 +152,8 @@ class VinaExecutor(Executor):
                     timestamp=time.time(),
                 )
                 continue
-            qed, sa_ease = self.qed_sa_lookup.get(it.smiles, (0.5, -3.0))
-            # maximize convention: activity = -dock
-            values = [-score, float(qed), float(sa_ease)]
+            # Expensive objective only (activity = -dock). QED/SA are library static props.
+            values = [-score]
             rec.results[it.item_id] = Observation(
                 smiles=it.smiles, pool_idx=it.pool_idx, values=values,
                 state=WellState.COMPLETED, qc_passed=True, source=self.kind,

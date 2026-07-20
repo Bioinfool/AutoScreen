@@ -3,18 +3,22 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 import numpy as np
 
 from autoscreen.config import load_config, project_root
+from autoscreen.core.benchmark import BenchmarkEvaluator
 from autoscreen.core.campaign import CampaignManager
 from autoscreen.core.constraints import ConstraintManager, PlateConfig
 from autoscreen.core.library import load_candidate_library
+from autoscreen.core.objectives import parse_objective_schema
+from autoscreen.core.oracle import load_moo_oracle
 from autoscreen.executors.replay import ReplayExecutor
 from autoscreen.executors.robot import RobotExecutor
 from autoscreen.executors.vina import VinaConfig, VinaExecutor
-from autoscreen.logging_utils import setup_logging, get_logger
+from autoscreen.logging_utils import get_logger, setup_logging
 
 log = get_logger("cli")
 
@@ -30,11 +34,15 @@ def _resolve(path: str | None, root: Path) -> Path | None:
 
 def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
     root = project_root()
+    schema = parse_objective_schema(cfg)
     data = cfg.get("data", {})
+    moo_path = _resolve(data.get("moo_csv"), root)
+
     library = load_candidate_library(
         _resolve(data["library_csv"], root),
         _resolve(data["fps_h5"], root),
-        _resolve(data.get("moo_csv"), root),
+        moo_csv=moo_path,
+        schema=schema,
     )
 
     plate_cfg = cfg.get("plate", {})
@@ -53,7 +61,6 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
     executor_kind = cfg.get("executor", "replay").lower()
     seed = int(cfg.get("seed", 0))
 
-    # Stock-outs only for robot (or when explicitly configured).
     constraints_cfg = cfg.get("constraints", {})
     stock_rate = constraints_cfg.get("stock_out_rate")
     if stock_rate is None and executor_kind == "robot":
@@ -63,24 +70,40 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
         stock_rng = np.random.default_rng(seed)
         stock = stock_rng.random(library.n) >= float(stock_rate)
         log.info("Applied stock_out_rate=%.3f (%d available)", float(stock_rate), int(stock.sum()))
-    constraints = ConstraintManager(plate=plate, stock_available=stock)
+
+    static_sa = None
+    if library.static_Y is not None and "sa_ease" in library.static_names:
+        static_sa = library.static_col("sa_ease")
+    constraints = ConstraintManager(
+        plate=plate, stock_available=stock, static_sa_ease=static_sa
+    )
+
+    evaluator = None
+    oracle = None
+    if moo_path is not None and (
+        executor_kind == "replay" or cfg.get("benchmark", executor_kind == "replay")
+    ):
+        oracle, _ = load_moo_oracle(moo_path, library.smis, schema=schema)
+        evaluator = BenchmarkEvaluator(oracle, use_expensive_only=True)
 
     if executor_kind == "replay":
+        if oracle is None:
+            raise ValueError("Replay executor requires data.moo_csv for the private label oracle")
+        stagger = bool(cfg.get("stagger", False))
         executor = ReplayExecutor(
-            library,
+            oracle,
             activity_noise=float(cfg.get("activity_noise", 0.0)),
             fail_rate=float(cfg.get("fail_rate", 0.0)),
             qc_reject_rate=float(cfg.get("qc_reject_rate", 0.0)),
             seed=seed,
+            min_latency=int(cfg.get("min_latency", 1)),
+            max_latency=int(cfg.get("max_latency", 1 if not stagger else 3)),
+            stagger=stagger,
         )
         use_plate = False
-        max_polls = 20
+        max_polls = 50
     elif executor_kind == "vina":
         v = cfg.get("vina", {})
-        qed_sa = {}
-        if library.Y_hidden is not None:
-            for i, smi in enumerate(library.smis):
-                qed_sa[smi] = (float(library.Y_hidden[i, 1]), float(library.Y_hidden[i, 2]))
         executor = VinaExecutor(
             VinaConfig(
                 receptor=v.get("receptor"),
@@ -92,13 +115,11 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
                 vina_bin=v.get("vina_bin", "vina"),
                 work_dir=str(_resolve(v.get("work_dir", "runs/vina_work"), root)),
             ),
-            qed_sa_lookup=qed_sa,
         )
         use_plate = False
         max_polls = 5
     elif executor_kind == "robot":
         r = cfg.get("robot", {})
-        import os
         base = os.environ.get("AUTOSCREEN_ROBOT_URL", r.get("base_url", "http://127.0.0.1:8080"))
         executor = RobotExecutor(
             base_url=base,
@@ -110,15 +131,16 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
         truth = r.get("truth_moo") or data.get("moo_csv")
         if truth:
             log.info(
-                "Robot campaigns require robot_mock truth aligned with moo_csv=%s "
-                "(set AUTOSCREEN_TRUTH_MOO on the mock service)",
+                "robot_mock AUTOSCREEN_TRUTH_MOO should match moo_csv=%s",
                 truth,
             )
     else:
         raise ValueError(f"Unknown executor: {executor_kind}")
 
+    controls = cfg.get("controls", {})
     ckpt = _resolve(cfg.get("checkpoint_dir", "runs/default"), root)
     sur = cfg.get("surrogate", {})
+    async_cfg = cfg.get("async", {})
     return CampaignManager(
         library=library,
         executor=executor,
@@ -135,6 +157,11 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
         use_plate_layout=use_plate,
         max_polls=max_polls,
         resume=resume,
+        schema=schema,
+        evaluator=evaluator,
+        max_active_jobs=int(async_cfg.get("max_active_jobs", cfg.get("max_active_jobs", 2))),
+        positive_idx=list(controls.get("positive_idx") or []),
+        negative_idx=list(controls.get("negative_idx") or []),
     )
 
 
@@ -148,7 +175,7 @@ def main(argv: list[str] | None = None) -> None:
         "--rounds",
         type=int,
         default=None,
-        help="Number of additional acquisition rounds to run from the current state",
+        help="Number of additional acquisition rounds from the current state",
     )
     run_p.add_argument("--resume", action="store_true", help="Resume from checkpoint_dir")
     run_p.add_argument("--log-level", default="INFO")

@@ -18,6 +18,15 @@ surrogate:
   n_estimators: 100
 
 objectives:
-  - activity
-  - qed
-  - sa_ease
+  - name: activity
+    kind: expensive
+static_properties:
+  - name: qed
+    kind: static
+  - name: sa_ease
+    kind: static
+
+async:
+  max_active_jobs: 2
+
+benchmark: true

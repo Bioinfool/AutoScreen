@@ -1,0 +1,143 @@
+"""Persistent per-candidate lifecycle for async campaign orchestration."""
+from __future__ import annotations
+
+import json
+from enum import Enum
+from pathlib import Path
+
+import numpy as np
+
+from autoscreen.core.types import ItemKind, Observation, WellState
+
+
+class CandidatePhase(str, Enum):
+    AVAILABLE = "AVAILABLE"
+    SELECTED = "SELECTED"
+    SUBMITTED = "SUBMITTED"
+    RUNNING = "RUNNING"
+    LABELED = "LABELED"
+    FAILED = "FAILED"
+    QC_REJECTED = "QC_REJECTED"
+    CONTROL = "CONTROL"
+    STOCKOUT = "STOCKOUT"
+    BLANK = "BLANK"
+
+
+_BLOCKING = {
+    CandidatePhase.SELECTED,
+    CandidatePhase.SUBMITTED,
+    CandidatePhase.RUNNING,
+    CandidatePhase.LABELED,
+    CandidatePhase.FAILED,
+    CandidatePhase.QC_REJECTED,
+    CandidatePhase.CONTROL,
+    CandidatePhase.STOCKOUT,
+}
+
+
+class CandidateStateStore:
+    def __init__(self, n: int):
+        self.n = int(n)
+        self._phase = [CandidatePhase.AVAILABLE] * self.n
+        self._job_id: list[str | None] = [None] * self.n
+
+    def phase(self, idx: int) -> CandidatePhase:
+        return self._phase[int(idx)]
+
+    def unavailable_mask(self) -> np.ndarray:
+        return np.array([p in _BLOCKING for p in self._phase], dtype=bool)
+
+    def available_indices(self) -> np.ndarray:
+        return np.where(~self.unavailable_mask())[0]
+
+    def mark_control(self, idxs: list[int]) -> None:
+        for i in idxs:
+            if 0 <= i < self.n:
+                self._phase[i] = CandidatePhase.CONTROL
+
+    def mark_stockout(self, mask: np.ndarray) -> None:
+        for i, out in enumerate(mask):
+            if out and self._phase[i] is CandidatePhase.AVAILABLE:
+                self._phase[i] = CandidatePhase.STOCKOUT
+
+    def mark_selected(self, idxs: list[int], job_id: str = "") -> None:
+        for i in idxs:
+            i = int(i)
+            if self._phase[i] is CandidatePhase.AVAILABLE:
+                self._phase[i] = CandidatePhase.SELECTED
+                self._job_id[i] = job_id or self._job_id[i]
+
+    def mark_submitted(self, idxs: list[int], job_id: str) -> None:
+        for i in idxs:
+            i = int(i)
+            if i < 0:
+                continue
+            self._phase[i] = CandidatePhase.SUBMITTED
+            self._job_id[i] = job_id
+
+    def mark_running(self, idxs: list[int]) -> None:
+        for i in idxs:
+            i = int(i)
+            if i >= 0 and self._phase[i] in (
+                CandidatePhase.SELECTED,
+                CandidatePhase.SUBMITTED,
+            ):
+                self._phase[i] = CandidatePhase.RUNNING
+
+    def apply_observation(self, obs: Observation) -> None:
+        i = int(obs.pool_idx)
+        if i < 0 or i >= self.n:
+            return
+        if obs.kind in (ItemKind.POSITIVE, ItemKind.NEGATIVE):
+            self._phase[i] = CandidatePhase.CONTROL
+            return
+        if obs.kind is ItemKind.BLANK:
+            return
+        if obs.state is WellState.FAILED:
+            self._phase[i] = CandidatePhase.FAILED
+        elif obs.state is WellState.QC_REJECTED:
+            self._phase[i] = CandidatePhase.QC_REJECTED
+        elif obs.state is WellState.CANCELLED:
+            # free for reselection
+            self._phase[i] = CandidatePhase.AVAILABLE
+            self._job_id[i] = None
+        elif obs.usable:
+            self._phase[i] = CandidatePhase.LABELED
+        elif obs.state is WellState.RUNNING:
+            self._phase[i] = CandidatePhase.RUNNING
+        elif obs.state is WellState.SUBMITTED:
+            self._phase[i] = CandidatePhase.SUBMITTED
+
+    def apply_observations(self, observations: list[Observation]) -> None:
+        for o in observations:
+            self.apply_observation(o)
+
+    def n_inflight(self) -> int:
+        return sum(
+            1
+            for p in self._phase
+            if p
+            in (
+                CandidatePhase.SELECTED,
+                CandidatePhase.SUBMITTED,
+                CandidatePhase.RUNNING,
+            )
+        )
+
+    def save(self, path: str | Path) -> None:
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "n": self.n,
+            "phase": [p.value for p in self._phase],
+            "job_id": self._job_id,
+        }
+        path.write_text(json.dumps(payload), encoding="utf-8")
+
+    @classmethod
+    def load(cls, path: str | Path) -> "CandidateStateStore":
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        store = cls(int(data["n"]))
+        store._phase = [CandidatePhase(p) for p in data["phase"]]
+        store._job_id = list(data.get("job_id") or [None] * store.n)
+        return store

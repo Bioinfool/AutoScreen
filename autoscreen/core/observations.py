@@ -1,19 +1,20 @@
-"""Persistent store of usable observations used to train the surrogate."""
+"""Persistent store of observations used to train the surrogate and for audit."""
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
 
-from .types import ItemKind, Observation, WellState
+from autoscreen.core.jobs import observation_from_dict, observation_to_dict
+from autoscreen.core.types import Observation
 
 
 class ObservationStore:
     def __init__(self) -> None:
         self._by_pool: dict[int, Observation] = {}
         self._history: list[Observation] = []
+        self._seen_keys: set[str] = set()
 
     def __len__(self) -> int:
         return len(self._by_pool)
@@ -22,8 +23,19 @@ class ObservationStore:
     def labeled_indices(self) -> list[int]:
         return sorted(self._by_pool.keys())
 
+    @property
+    def history(self) -> list[Observation]:
+        return list(self._history)
+
+    def _key(self, obs: Observation) -> str:
+        return obs.item_id or f"{obs.pool_idx}:{obs.state.value}:{obs.kind.value}"
+
     def add(self, obs: Observation, *, replace: bool = False) -> bool:
-        """Add an observation. Only usable experimental results enter training set."""
+        """Add an observation. Deduplicate by item_id. Only usable → training set."""
+        key = self._key(obs)
+        if key in self._seen_keys and not replace:
+            return False
+        self._seen_keys.add(key)
         self._history.append(obs)
         if not obs.usable:
             return False
@@ -44,6 +56,10 @@ class ObservationStore:
         for row, idx in enumerate(idxs):
             vals = self._by_pool[idx].values
             assert vals is not None
+            if len(vals) != n_objectives:
+                raise ValueError(
+                    f"Observation at {idx} has {len(vals)} values; expected {n_objectives}"
+                )
             Y[row] = np.asarray(vals, dtype=np.float64)
         return X, Y
 
@@ -56,15 +72,9 @@ class ObservationStore:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            "labeled": [
-                {
-                    **asdict(o),
-                    "state": o.state.value,
-                    "kind": o.kind.value,
-                }
-                for o in self._by_pool.values()
-            ],
-            "history_len": len(self._history),
+            "labeled": [observation_to_dict(o) for o in self._by_pool.values()],
+            "history": [observation_to_dict(o) for o in self._history],
+            "seen_keys": sorted(self._seen_keys),
         }
         path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
@@ -72,20 +82,13 @@ class ObservationStore:
     def load(cls, path: str | Path) -> "ObservationStore":
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         store = cls()
-        for d in data.get("labeled", []):
-            obs = Observation(
-                smiles=d["smiles"],
-                pool_idx=int(d["pool_idx"]),
-                values=d.get("values"),
-                state=WellState(d["state"]),
-                qc_passed=bool(d.get("qc_passed", False)),
-                source=d.get("source", ""),
-                compound_id=d.get("compound_id", ""),
-                item_id=d.get("item_id", ""),
-                kind=ItemKind(d.get("kind", "experimental")),
-                raw=d.get("raw") or {},
-                message=d.get("message", ""),
-                timestamp=float(d.get("timestamp", 0.0)),
-            )
-            store.add(obs, replace=True)
+        hist = data.get("history")
+        if hist is not None:
+            for d in hist:
+                store.add(observation_from_dict(d), replace=True)
+            store._seen_keys = set(data.get("seen_keys") or store._seen_keys)
+        else:
+            # Backward compatible: labeled-only checkpoints
+            for d in data.get("labeled", []):
+                store.add(observation_from_dict(d), replace=True)
         return store
