@@ -52,9 +52,10 @@ def test_concurrent_jobs_unique_item_ids_and_all_train(tmp_path: Path):
     assert len(job_ids) == len(set(job_ids))
 
     # Every usable experimental observation must be in the training store
-    usable = [o for o in camp.store.history if o.usable]
+    usable = [o for o in camp.store.history if o.contributes_measurement]
     assert usable
-    assert len(camp.store) == len({o.pool_idx for o in usable})
+    assert set(camp.store.labeled_indices).issubset({o.pool_idx for o in usable})
+    assert len(camp.store) == len(camp.store.labeled_indices)
 
     # Concurrent batches must use distinct batch_seq / job prefixes
     acq_jobs = [r for r in camp.jobs.all() if r.job.meta.get("acquisition") != "init"]
@@ -123,7 +124,7 @@ def test_per_job_history_not_cross_contaminated(tmp_path: Path):
         rec = camp.jobs.get(jid)
         item_ids = {it.item_id for it in rec.job.items}
         job_obs = [o for o in camp.store.history if o.item_id in item_ids]
-        assert row["completed"] == sum(1 for o in job_obs if o.usable)
+        assert row["completed"] == sum(1 for o in job_obs if o.contributes_measurement)
         assert row["failed"] == sum(1 for o in job_obs if o.state is WellState.FAILED)
         assert row["qc_rejected"] == sum(1 for o in job_obs if o.state is WellState.QC_REJECTED)
         assert row["completed"] <= len(rec.job.items)

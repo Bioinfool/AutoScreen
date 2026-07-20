@@ -99,11 +99,23 @@ class Observation:
 
     @property
     def usable(self) -> bool:
+        """Single experimental well usable as a measurement (not aggregated label)."""
         return (
             self.state is WellState.COMPLETED
             and self.qc_passed
             and self.values is not None
             and self.kind is ItemKind.EXPERIMENTAL
+            and self.pool_idx >= 0
+        )
+
+    @property
+    def contributes_measurement(self) -> bool:
+        """Experimental or replicate well that can enter replicate aggregation."""
+        return (
+            self.state is WellState.COMPLETED
+            and self.qc_passed
+            and self.values is not None
+            and self.kind in (ItemKind.EXPERIMENTAL, ItemKind.REPLICATE)
             and self.pool_idx >= 0
         )
 

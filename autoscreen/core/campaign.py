@@ -503,6 +503,10 @@ class CampaignManager:
     def _ingest(self, observations: list[Observation]) -> int:
         n_train = self.store.add_many(observations)
         self.cand.apply_observations(observations)
+        self.cand.sync_from_store(
+            self.store.labeled_indices,
+            aggregate_qc_rejected=self.store._aggregate_qc_rejected,
+        )
         return n_train
 
     def _acquisition_ref_point(self, labeled_Y: np.ndarray) -> np.ndarray:
@@ -567,19 +571,28 @@ class CampaignManager:
 
     def _metrics_dict(self) -> dict[str, float]:
         if self.evaluator is None:
-            return {"hv_frac": float("nan"), "pareto_recall": float("nan")}
+            return {
+                "top1_recall": float("nan"),
+                "ef_top1": float("nan"),
+                "bedroc": float("nan"),
+            }
         rep = self.evaluator.evaluate(self.store.labeled_indices)
         return {
+            "top01_recall": rep.top01_recall,
+            "top1_recall": rep.top1_recall,
+            "ef_top1": rep.ef_top1,
+            "bedroc": rep.bedroc,
+            "n_hits_top1": float(rep.n_hits_top1),
+            "mean_activity": rep.mean_activity,
             "hv_frac": rep.hv_frac,
             "pareto_recall": rep.pareto_recall,
-            "mean_activity": rep.mean_activity,
         }
 
     def _job_history_stats(self, rec: JobRecord) -> dict[str, int]:
         item_ids = {it.item_id for it in rec.job.items}
         obs = [o for o in self.store.history if o.item_id in item_ids]
         return {
-            "completed": sum(1 for o in obs if o.usable),
+            "completed": sum(1 for o in obs if o.contributes_measurement),
             "failed": sum(1 for o in obs if o.state is WellState.FAILED),
             "qc_rejected": sum(1 for o in obs if o.state is WellState.QC_REJECTED),
         }
@@ -608,6 +621,9 @@ class CampaignManager:
                         "round": 0,
                         "batch_seq": rec.job.meta.get("batch_seq", rec.job.round),
                         "n_labeled": len(self.store),
+                        "top1_recall": m.get("top1_recall", float("nan")),
+                        "ef_top1": m.get("ef_top1", float("nan")),
+                        "bedroc": m.get("bedroc", float("nan")),
                         "hv_frac": m.get("hv_frac", float("nan")),
                         "pareto_recall": m.get("pareto_recall", float("nan")),
                         "submitted": len(rec.job.items),
@@ -625,6 +641,9 @@ class CampaignManager:
                         "round": self.state.round,
                         "batch_seq": rec.job.meta.get("batch_seq", rec.job.round),
                         "n_labeled": len(self.store),
+                        "top1_recall": m.get("top1_recall", float("nan")),
+                        "ef_top1": m.get("ef_top1", float("nan")),
+                        "bedroc": m.get("bedroc", float("nan")),
                         "hv_frac": m.get("hv_frac", float("nan")),
                         "pareto_recall": m.get("pareto_recall", float("nan")),
                         "submitted": len(rec.job.items),
@@ -636,12 +655,14 @@ class CampaignManager:
                     }
                 )
                 log.info(
-                    "[%s] r%02d batch=%s n=%d hv_frac=%s open=%d",
+                    "[%s] r%02d batch=%s n=%d top1=%.3f EF=%.2f bedroc=%.3f open=%d",
                     self.state.campaign_id,
                     self.state.round,
                     rec.job.meta.get("batch_seq"),
                     len(self.store),
-                    m.get("hv_frac"),
+                    m.get("top1_recall") or 0.0,
+                    m.get("ef_top1") or 0.0,
+                    m.get("bedroc") or 0.0,
                     len(self.jobs.open_jobs()),
                 )
 
