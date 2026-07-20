@@ -68,15 +68,24 @@ docker compose run --rm autoscreen python -m autoscreen.cli run --config configs
 
 更大库（如百万级 AmpC）可按同样格式放入 `data/`，改 YAML 即可，无需改代码。
 
+## 科学与执行边界（当前实现）
+
+- **昂贵目标**（如 `activity`）由 Executor 返回；**静态属性**（QED、SA）挂在 `CandidateLibrary`，用于约束，不进 surrogate 目标。
+- **隐藏标签**只存在于 `ReplayExecutor` 的 oracle 与可选的 `BenchmarkEvaluator`；Campaign 不得持有 `Y_hidden`。
+- **Campaign** 以 `step()` 轮询：可多 `active jobs`、部分结果入库、pending 分子不可再选；checkpoint 含 `jobs.json` / `candidate_state.json` / 完整观测历史。
+- VinaExecutor 仍是串行对接原型，不是异步 VS 的完备证明。
+
 ## 叙事边界
 
-- 可以说：主动学习虚拟筛选 + 可接入自动化实验的编排与协议层  
-- 不可以说：已完成真实机器人药筛（除非已接入真实平台并跑通实验）
+- 可以说：主动学习虚拟筛选 + 可插拔执行器接口 + 异步编排骨架（JobStore）  
+- 不可以说：已完成真实机器人药筛；不可以说 Vina 路径已是生产级异步对接
 
 ## 开发与测试
 
 ```bash
 pytest -q
 ```
+
+CI：`.github/workflows/ci.yml`（Enamine10k 指纹现场生成后跑测试）。
 
 模块：`autoscreen/core/`、`autoscreen/executors/`、`autoscreen/protocol/`、`robot_mock/`。
