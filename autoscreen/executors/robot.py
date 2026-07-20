@@ -2,12 +2,11 @@
 from __future__ import annotations
 
 import time
-import uuid
 
 import httpx
 
 from autoscreen.core.types import ItemKind, Job, JobStatus, Observation, WellState
-from autoscreen.executors.base import Executor
+from autoscreen.executors.base import Executor, JobNotFound
 from autoscreen.protocol.v1 import plate_submit_payload
 
 
@@ -39,9 +38,10 @@ class RobotExecutor(Executor):
         return data["job_id"]
 
     def poll(self, job_id: str) -> JobStatus:
-        # wall-clock pacing for async simulation
         time.sleep(self.poll_interval_s)
         resp = self._client.get(f"/v1/jobs/{job_id}")
+        if resp.status_code == 404:
+            raise JobNotFound(job_id)
         resp.raise_for_status()
         data = resp.json()
         observations = []

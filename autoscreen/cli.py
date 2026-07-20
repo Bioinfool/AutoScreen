@@ -114,6 +114,9 @@ def build_from_config(cfg: dict, *, resume: bool = False) -> CampaignManager:
                 cpu=int(v.get("cpu", 4)),
                 vina_bin=v.get("vina_bin", "vina"),
                 work_dir=str(_resolve(v.get("work_dir", "runs/vina_work"), root)),
+                max_workers=int(v.get("max_workers", 2)),
+                per_ligand_timeout_s=float(v.get("per_ligand_timeout_s", 120)),
+                max_retries=int(v.get("max_retries", 1)),
             ),
         )
         use_plate = False

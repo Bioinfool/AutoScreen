@@ -9,7 +9,7 @@ import numpy as np
 
 from autoscreen.core.oracle import ArrayLabelOracle
 from autoscreen.core.types import ItemKind, Job, JobStatus, Observation, WellState
-from autoscreen.executors.base import Executor
+from autoscreen.executors.base import Executor, JobNotFound
 
 
 @dataclass
@@ -95,7 +95,7 @@ class ReplayExecutor(Executor):
 
     def poll(self, job_id: str) -> JobStatus:
         if job_id not in self._jobs:
-            raise KeyError(
+            raise JobNotFound(
                 f"Unknown job_id={job_id}. In-process ReplayExecutor state is not "
                 "shared across processes; resume must re-submit via JobStore."
             )

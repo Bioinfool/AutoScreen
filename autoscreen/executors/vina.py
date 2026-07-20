@@ -1,24 +1,28 @@
-"""AutoDock Vina executor for docking-based virtual screening.
-
-Requires the `vina` binary on PATH (or configured via vina_bin) and a receptor PDBQT.
-When receptor is missing, construction still succeeds but submit raises a clear error
-so unit tests can skip without failing the import path.
-"""
+"""AutoDock Vina executor with per-ligand async tasks (non-blocking poll)."""
 from __future__ import annotations
 
 import shutil
 import subprocess
-import tempfile
 import time
 import uuid
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 
-from autoscreen.core.types import ItemKind, Job, JobStatus, Observation, WellState
-from autoscreen.executors.base import Executor
+from autoscreen.core.types import ItemKind, Job, JobItem, JobStatus, Observation, WellState
+from autoscreen.executors.base import Executor, JobNotFound
 from autoscreen.logging_utils import get_logger
 
 log = get_logger("vina")
+
+
+class LigandTaskState(str, Enum):
+    QUEUED = "QUEUED"
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    TIMEOUT = "TIMEOUT"
 
 
 @dataclass
@@ -31,29 +35,158 @@ class VinaConfig:
     cpu: int = 4
     vina_bin: str = "vina"
     work_dir: str = "runs/vina_work"
+    max_workers: int = 2
+    per_ligand_timeout_s: float = 120.0
+    max_retries: int = 1
+
+
+@dataclass
+class _LigandTask:
+    item: JobItem
+    state: LigandTaskState = LigandTaskState.QUEUED
+    future: Future | None = None
+    attempts: int = 0
+    observation: Observation | None = None
+    work_dir: Path | None = None
 
 
 @dataclass
 class _JobRec:
     job: Job
-    results: dict[str, Observation] = field(default_factory=dict)
-    done: bool = False
+    tasks: dict[str, _LigandTask] = field(default_factory=dict)
+
+
+def _parse_vina_score(stdout: str) -> float | None:
+    for line in stdout.splitlines():
+        parts = line.split()
+        if len(parts) >= 2 and parts[0] == "1":
+            try:
+                return float(parts[1])
+            except ValueError:
+                continue
+    return None
+
+
+def _dock_ligand(
+    *,
+    smiles: str,
+    work: Path,
+    config: VinaConfig,
+) -> tuple[float | None, str]:
+    """Run one docking; returns (score_or_None, message). Persistent under ``work``."""
+    work.mkdir(parents=True, exist_ok=True)
+    score_path = work / "score.txt"
+    if score_path.exists():
+        try:
+            return float(score_path.read_text(encoding="utf-8").strip()), "cached"
+        except ValueError:
+            pass
+
+    try:
+        from rdkit import Chem
+        from rdkit.Chem import AllChem
+    except ImportError as e:
+        raise RuntimeError("RDKit required for VinaExecutor ligand prep") from e
+
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None, "invalid smiles"
+    mol = Chem.AddHs(mol)
+    if AllChem.EmbedMolecule(mol, randomSeed=0) != 0:
+        return None, "embed failed"
+    AllChem.UFFOptimizeMolecule(mol)
+    ligand_pdb = work / "ligand.pdb"
+    Chem.MolToPDBFile(mol, str(ligand_pdb))
+
+    ligand_pdbqt = work / "ligand.pdbqt"
+    obabel = shutil.which("obabel") or shutil.which("obabel.exe")
+    if obabel:
+        subprocess.run(
+            [obabel, str(ligand_pdb), "-O", str(ligand_pdbqt)],
+            check=False,
+            capture_output=True,
+        )
+    if not ligand_pdbqt.exists():
+        return None, "need OpenBabel for PDBQT"
+
+    out = work / "out.pdbqt"
+    log_path = work / "vina.log"
+    cx, cy, cz = config.box_center
+    sx, sy, sz = config.box_size
+    assert config.receptor is not None
+    cmd = [
+        config.vina_bin,
+        "--receptor",
+        config.receptor,
+        "--ligand",
+        str(ligand_pdbqt),
+        "--center_x",
+        str(cx),
+        "--center_y",
+        str(cy),
+        "--center_z",
+        str(cz),
+        "--size_x",
+        str(sx),
+        "--size_y",
+        str(sy),
+        "--size_z",
+        str(sz),
+        "--exhaustiveness",
+        str(config.exhaustiveness),
+        "--num_modes",
+        str(config.num_modes),
+        "--cpu",
+        str(config.cpu),
+        "--out",
+        str(out),
+    ]
+    try:
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=config.per_ligand_timeout_s,
+        )
+    except subprocess.TimeoutExpired:
+        (work / "timeout").write_text("1", encoding="utf-8")
+        return None, "timeout"
+    log_path.write_text(proc.stdout + "\n" + proc.stderr, encoding="utf-8")
+    if proc.returncode != 0:
+        return None, f"vina exit {proc.returncode}"
+    score = _parse_vina_score(proc.stdout)
+    if score is None:
+        return None, "parse failed"
+    score_path.write_text(str(score), encoding="utf-8")
+    return score, "ok"
 
 
 class VinaExecutor(Executor):
+    """Per-ligand thread pool; ``poll`` returns immediately with partial results."""
+
     kind = "vina"
 
-    def __init__(self, config: VinaConfig, qed_sa_lookup: dict[str, tuple[float, float]] | None = None):
-        """qed_sa_lookup maps smiles -> (qed, sa_ease) in maximize convention for MOO."""
+    def __init__(
+        self,
+        config: VinaConfig,
+        qed_sa_lookup: dict[str, tuple[float, float]] | None = None,
+        *,
+        dock_fn=None,
+    ):
         self.config = config
         self.qed_sa_lookup = qed_sa_lookup or {}
+        self._dock_fn = dock_fn or _dock_ligand
         self._jobs: dict[str, _JobRec] = {}
         self._idempotency: dict[str, str] = {}
+        self._pool = ThreadPoolExecutor(max_workers=max(1, int(config.max_workers)))
         Path(config.work_dir).mkdir(parents=True, exist_ok=True)
 
     @property
     def available(self) -> bool:
         return bool(self.config.receptor) and shutil.which(self.config.vina_bin) is not None
+
+    def close(self) -> None:
+        self._pool.shutdown(wait=False, cancel_futures=True)
 
     def submit(self, job: Job) -> str:
         if not self.config.receptor:
@@ -61,7 +194,7 @@ class VinaExecutor(Executor):
                 "VinaExecutor: receptor PDBQT path is not configured. "
                 "Set vina.receptor in the config file."
             )
-        if shutil.which(self.config.vina_bin) is None:
+        if self._dock_fn is _dock_ligand and shutil.which(self.config.vina_bin) is None:
             raise RuntimeError(
                 f"VinaExecutor: binary '{self.config.vina_bin}' not found on PATH. "
                 "Install AutoDock Vina or set vina.vina_bin."
@@ -70,110 +203,173 @@ class VinaExecutor(Executor):
         if key in self._idempotency:
             return self._idempotency[key]
         job_id = job.job_id or f"vina-{uuid.uuid4().hex[:12]}"
-        self._jobs[job_id] = _JobRec(job=job)
+        tasks: dict[str, _LigandTask] = {}
+        for it in job.items:
+            work = Path(self.config.work_dir) / job_id / it.item_id.replace(":", "_")
+            tasks[it.item_id] = _LigandTask(item=it, work_dir=work)
+        self._jobs[job_id] = _JobRec(job=job, tasks=tasks)
         self._idempotency[key] = job_id
-        # Run docking synchronously on first poll for simplicity / reliability
         return job_id
 
-    def _dock_one(self, smiles: str, work: Path) -> float | None:
-        """Return docking score (lower is better) or None on failure."""
-        try:
-            from rdkit import Chem
-            from rdkit.Chem import AllChem
-        except ImportError as e:
-            raise RuntimeError("RDKit required for VinaExecutor ligand prep") from e
-
-        mol = Chem.MolFromSmiles(smiles)
-        if mol is None:
-            return None
-        mol = Chem.AddHs(mol)
-        if AllChem.EmbedMolecule(mol, randomSeed=0) != 0:
-            return None
-        AllChem.UFFOptimizeMolecule(mol)
-        ligand_pdb = work / "ligand.pdb"
-        Chem.MolToPDBFile(mol, str(ligand_pdb))
-
-        # Prefer OpenBabel if present for PDB->PDBQT; otherwise skip with failure
-        ligand_pdbqt = work / "ligand.pdbqt"
-        obabel = shutil.which("obabel") or shutil.which("obabel.exe")
-        if obabel:
-            subprocess.run(
-                [obabel, str(ligand_pdb), "-O", str(ligand_pdbqt)],
-                check=False, capture_output=True,
+    def _finalize_task(self, task: _LigandTask, score: float | None, message: str) -> None:
+        it = task.item
+        common = dict(
+            smiles=it.smiles,
+            pool_idx=it.pool_idx,
+            source=self.kind,
+            compound_id=it.compound_id,
+            item_id=it.item_id,
+            kind=it.kind,
+            timestamp=time.time(),
+        )
+        if it.kind is ItemKind.BLANK or it.pool_idx < 0:
+            task.state = LigandTaskState.COMPLETED
+            task.observation = Observation(
+                values=None,
+                state=WellState.COMPLETED,
+                qc_passed=False,
+                message="blank",
+                **common,
             )
-        if not ligand_pdbqt.exists():
-            log.warning("Could not produce ligand PDBQT for %s (need OpenBabel)", smiles[:40])
-            return None
-
-        out = work / "out.pdbqt"
-        log_path = work / "vina.log"
-        cx, cy, cz = self.config.box_center
-        sx, sy, sz = self.config.box_size
-        cmd = [
-            self.config.vina_bin,
-            "--receptor", self.config.receptor,
-            "--ligand", str(ligand_pdbqt),
-            "--center_x", str(cx), "--center_y", str(cy), "--center_z", str(cz),
-            "--size_x", str(sx), "--size_y", str(sy), "--size_z", str(sz),
-            "--exhaustiveness", str(self.config.exhaustiveness),
-            "--num_modes", str(self.config.num_modes),
-            "--cpu", str(self.config.cpu),
-            "--out", str(out),
-        ]
-        proc = subprocess.run(cmd, capture_output=True, text=True)
-        log_path.write_text(proc.stdout + "\n" + proc.stderr, encoding="utf-8")
-        # Parse best affinity from stdout
-        for line in proc.stdout.splitlines():
-            parts = line.split()
-            if len(parts) >= 2 and parts[0] == "1":
-                try:
-                    return float(parts[1])
-                except ValueError:
-                    continue
-        return None
-
-    def _run_job(self, rec: _JobRec) -> None:
-        for it in rec.job.items:
-            if it.kind is ItemKind.BLANK or it.pool_idx < 0:
-                rec.results[it.item_id] = Observation(
-                    smiles=it.smiles, pool_idx=it.pool_idx, values=None,
-                    state=WellState.COMPLETED, qc_passed=False, source=self.kind,
-                    item_id=it.item_id, kind=it.kind, message="blank",
-                    timestamp=time.time(),
-                )
-                continue
-            with tempfile.TemporaryDirectory(dir=self.config.work_dir) as td:
-                score = self._dock_one(it.smiles, Path(td))
-            if score is None:
-                rec.results[it.item_id] = Observation(
-                    smiles=it.smiles, pool_idx=it.pool_idx, values=None,
-                    state=WellState.FAILED, qc_passed=False, source=self.kind,
-                    item_id=it.item_id, kind=it.kind, message="vina failed",
-                    timestamp=time.time(),
-                )
-                continue
-            # Expensive objective only (activity = -dock). QED/SA are library static props.
-            values = [-score]
-            rec.results[it.item_id] = Observation(
-                smiles=it.smiles, pool_idx=it.pool_idx, values=values,
-                state=WellState.COMPLETED, qc_passed=True, source=self.kind,
-                item_id=it.item_id, kind=it.kind, message="ok",
-                raw={"dock": score}, timestamp=time.time(),
+            return
+        if message == "timeout":
+            task.state = LigandTaskState.TIMEOUT
+            task.observation = Observation(
+                values=None,
+                state=WellState.FAILED,
+                qc_passed=False,
+                message="vina timeout",
+                **common,
             )
-        rec.done = True
+            return
+        if score is None:
+            task.state = LigandTaskState.FAILED
+            task.observation = Observation(
+                values=None,
+                state=WellState.FAILED,
+                qc_passed=False,
+                message=message or "vina failed",
+                **common,
+            )
+            return
+        task.state = LigandTaskState.COMPLETED
+        task.observation = Observation(
+            values=[-score],
+            state=WellState.COMPLETED,
+            qc_passed=True,
+            message="ok",
+            raw={"dock": score},
+            **common,
+        )
+
+    def _start_task(self, job_id: str, task: _LigandTask) -> None:
+        it = task.item
+        if it.kind is ItemKind.BLANK or it.pool_idx < 0:
+            self._finalize_task(task, None, "blank")
+            return
+        assert task.work_dir is not None
+        task.attempts += 1
+        task.state = LigandTaskState.RUNNING
+        cfg = self.config
+
+        def _run():
+            return self._dock_fn(smiles=it.smiles, work=task.work_dir, config=cfg)
+
+        task.future = self._pool.submit(_run)
+
+    def _pump(self, job_id: str, rec: _JobRec) -> None:
+        # Collect finished futures
+        for task in rec.tasks.values():
+            if task.state is not LigandTaskState.RUNNING or task.future is None:
+                continue
+            if not task.future.done():
+                continue
+            try:
+                score, message = task.future.result()
+            except Exception as e:
+                score, message = None, str(e)
+            task.future = None
+            if (
+                score is None
+                and message != "timeout"
+                and task.attempts <= self.config.max_retries
+            ):
+                task.state = LigandTaskState.QUEUED
+                continue
+            self._finalize_task(task, score, message)
+
+        # Launch queued up to max_workers globally across jobs
+        running = sum(
+            1
+            for r in self._jobs.values()
+            for t in r.tasks.values()
+            if t.state is LigandTaskState.RUNNING
+        )
+        capacity = max(0, self.config.max_workers - running)
+        for task in rec.tasks.values():
+            if capacity <= 0:
+                break
+            if task.state is LigandTaskState.QUEUED:
+                self._start_task(job_id, task)
+                if task.state is LigandTaskState.RUNNING:
+                    capacity -= 1
 
     def poll(self, job_id: str) -> JobStatus:
+        if job_id not in self._jobs:
+            raise JobNotFound(job_id)
         rec = self._jobs[job_id]
-        if not rec.done:
-            self._run_job(rec)
+        self._pump(job_id, rec)
+
+        observations: list[Observation] = []
+        pending = 0
+        for task in rec.tasks.values():
+            if task.observation is not None:
+                observations.append(task.observation)
+            elif task.state is LigandTaskState.RUNNING:
+                pending += 1
+                observations.append(
+                    Observation(
+                        smiles=task.item.smiles,
+                        pool_idx=task.item.pool_idx,
+                        values=None,
+                        state=WellState.RUNNING,
+                        qc_passed=False,
+                        source=self.kind,
+                        item_id=task.item.item_id,
+                        kind=task.item.kind,
+                        message="running",
+                        timestamp=time.time(),
+                    )
+                )
+            else:
+                pending += 1
         return JobStatus(
             job_id=job_id,
-            done=rec.done,
-            observations=list(rec.results.values()),
-            n_pending=0 if rec.done else len(rec.job.items),
+            done=pending == 0 and all(t.observation is not None for t in rec.tasks.values()),
+            observations=observations,
+            n_pending=pending,
             round=rec.job.round,
         )
 
     def cancel(self, job_id: str) -> None:
-        if job_id in self._jobs and not self._jobs[job_id].done:
-            self._jobs[job_id].done = True
+        if job_id not in self._jobs:
+            return
+        rec = self._jobs[job_id]
+        for task in rec.tasks.values():
+            if task.observation is not None:
+                continue
+            if task.future is not None and not task.future.done():
+                task.future.cancel()
+            task.state = LigandTaskState.FAILED
+            task.observation = Observation(
+                smiles=task.item.smiles,
+                pool_idx=task.item.pool_idx,
+                values=None,
+                state=WellState.CANCELLED,
+                qc_passed=False,
+                source=self.kind,
+                item_id=task.item.item_id,
+                kind=task.item.kind,
+                message="cancelled",
+                timestamp=time.time(),
+            )

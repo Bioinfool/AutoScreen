@@ -6,6 +6,10 @@ from abc import ABC, abstractmethod
 from autoscreen.core.types import Job, JobStatus
 
 
+class JobNotFound(KeyError):
+    """Remote / in-process executor has no record of this job_id."""
+
+
 class Executor(ABC):
     """Evaluation backend interface used by CampaignManager."""
 

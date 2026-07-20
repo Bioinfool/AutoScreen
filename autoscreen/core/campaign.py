@@ -1,7 +1,6 @@
 """CampaignManager: async-capable active-learning orchestration."""
 from __future__ import annotations
 
-import json
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
@@ -20,31 +19,39 @@ from autoscreen.core.metrics import make_ref_point
 from autoscreen.core.model import MultiOutputRFSurrogate, SurrogateModel
 from autoscreen.core.objectives import ObjectiveSchema, default_schema
 from autoscreen.core.observations import ObservationStore
+from autoscreen.core.persist import atomic_write_json
 from autoscreen.core.types import ItemKind, Job, JobItem, Observation, WellState
-from autoscreen.executors.base import Executor
+from autoscreen.executors.base import Executor, JobNotFound
 from autoscreen.logging_utils import get_logger
 
 log = get_logger("campaign")
+
+MAX_POLL_FAILS = 8
+MAX_RESUBMIT = 3
 
 
 @dataclass
 class CampaignState:
     campaign_id: str
     seed: int
-    round: int  # completed acquisition rounds (0 = init only / in progress)
+    round: int  # completed acquisition batches (analysis counter)
     history: list[dict] = field(default_factory=list)
     positive_idx: list[int] = field(default_factory=list)
     negative_idx: list[int] = field(default_factory=list)
     init_done: bool = False
     schema: dict = field(default_factory=dict)
+    next_batch_seq: int = 0  # monotonic submit counter for unique IDs
 
     def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(asdict(self), indent=2), encoding="utf-8")
+        atomic_write_json(path, asdict(self))
 
     @classmethod
     def load(cls, path: Path) -> "CampaignState":
-        return cls(**json.loads(path.read_text(encoding="utf-8")))
+        import json
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+        data.setdefault("next_batch_seq", 0)
+        return cls(**data)
 
 
 class CampaignManager:
@@ -74,7 +81,6 @@ class CampaignManager:
         positive_idx: list[int] | None = None,
         negative_idx: list[int] | None = None,
     ):
-        # Scientific boundary: library must not expose Y_hidden
         if hasattr(library, "Y_hidden") and getattr(library, "Y_hidden") is not None:
             raise ValueError(
                 "CandidateLibrary must not carry Y_hidden; use ReplayExecutor(oracle=...) "
@@ -129,9 +135,10 @@ class CampaignManager:
             )
             self._reattach_open_jobs()
             log.info(
-                "Resumed %s round=%s labeled=%s open_jobs=%s",
+                "Resumed %s round=%s batch_seq=%s labeled=%s open_jobs=%s",
                 self.state.campaign_id,
                 self.state.round,
+                self.state.next_batch_seq,
                 len(self.store),
                 len(self.jobs.open_jobs()),
             )
@@ -158,43 +165,27 @@ class CampaignManager:
                 negative_idx=list(negative_idx or []),
                 init_done=False,
                 schema=self.schema.to_dict(),
+                next_batch_seq=0,
             )
             self._resolve_controls()
             self.cand.mark_control(self.state.positive_idx + self.state.negative_idx)
             self._submit_init()
             self._checkpoint()
 
-    # ------------------------------------------------------------------ controls
     def _resolve_controls(self) -> None:
-        """Controls come from config; never from hidden activity labels."""
+        """Controls must be explicit — never inferred from QED or hidden labels."""
         need_p = self.plate.n_positive if self.use_plate_layout else 0
         need_n = self.plate.n_negative if self.use_plate_layout else 0
         if need_p == 0 and need_n == 0:
             return
-        rng = np.random.default_rng(self.state.seed)
-        avail = self.cand.available_indices()
         if len(self.state.positive_idx) < need_p or len(self.state.negative_idx) < need_n:
-            # Prefer static qed extremes when available; else random
-            if self.library.static_Y is not None and "qed" in self.library.static_names:
-                qed = self.library.static_col("qed")
-                order = np.argsort(-qed)
-                pos = [int(i) for i in order[:need_p]]
-                neg = [int(i) for i in order[-need_n:]] if need_n else []
-            else:
-                pick = rng.choice(avail, size=min(len(avail), need_p + need_n), replace=False)
-                pos = pick[:need_p].tolist()
-                neg = pick[need_p : need_p + need_n].tolist()
-            if len(self.state.positive_idx) < need_p:
-                self.state.positive_idx = pos
-            if len(self.state.negative_idx) < need_n:
-                self.state.negative_idx = neg
-            log.info(
-                "Controls from static/random (not hidden labels): +%s -%s",
-                self.state.positive_idx,
-                self.state.negative_idx,
+            raise ValueError(
+                "Plate layout requires explicit controls.positive_idx / negative_idx "
+                f"(need +{need_p}/-{need_n}). AutoScreen will not infer biological "
+                "controls from QED, SA, or hidden labels. Set n_positive/n_negative to 0 "
+                "to disable plate controls."
             )
 
-    # ------------------------------------------------------------------ jobs
     def _submit_init(self) -> None:
         rng = np.random.default_rng(self.state.seed)
         avail = self.cand.available_indices()
@@ -203,46 +194,88 @@ class CampaignManager:
         if self.use_plate_layout:
             init_k = min(init_k, self.plate.n_experimental)
         idxs = rng.choice(avail, size=init_k, replace=False).tolist()
-        self._submit_batch(0, idxs, acquisition="init")
+        self._submit_batch(idxs, acquisition="init")
+
+    def _experimental_idxs(self, job: Job) -> list[int]:
+        return [
+            it.pool_idx
+            for it in job.items
+            if it.kind in (ItemKind.EXPERIMENTAL, ItemKind.REPLICATE) and it.pool_idx >= 0
+        ]
 
     def _reattach_open_jobs(self) -> None:
         for rec in self.jobs.open_jobs():
+            if rec.status is JobLifecycle.PREPARED or not rec.remote_job_id:
+                try:
+                    remote = self.executor.submit(rec.job)
+                    rec.remote_job_id = remote
+                    rec.status = JobLifecycle.SUBMITTED
+                    rec.retry_count += 1
+                    rec.message = "submitted after resume from PREPARED"
+                    self.cand.mark_submitted(self._experimental_idxs(rec.job), remote)
+                    log.warning("Completed deferred submit for %s -> %s", rec.job.job_id, remote)
+                except Exception as e:
+                    rec.status = JobLifecycle.FAILED
+                    rec.message = f"resume submit failed: {e}"
+                    self.cand.release(self._experimental_idxs(rec.job), job_id=rec.job.job_id)
+                continue
             try:
                 self.executor.poll(rec.remote_job_id)
-            except Exception:
-                # In-process executors lose memory across processes — re-submit
+            except JobNotFound:
+                if rec.retry_count >= MAX_RESUBMIT:
+                    rec.status = JobLifecycle.FAILED
+                    rec.message = "JobNotFound and max resubmit exceeded"
+                    self.cand.release(self._experimental_idxs(rec.job), job_id=rec.job.job_id)
+                    continue
                 jid = self.executor.submit(rec.job)
                 rec.remote_job_id = jid
                 rec.retry_count += 1
-                rec.message = "reattached via re-submit"
-                log.warning("Re-submitted job %s as %s after resume", rec.job.job_id, jid)
+                rec.message = "reattached via re-submit after JobNotFound"
+                log.warning("Re-submitted job %s as %s after JobNotFound", rec.job.job_id, jid)
+            except Exception as e:
+                rec.poll_fail_count += 1
+                rec.message = f"poll error on resume (will retry): {e}"
+                log.warning("Poll error on resume for %s: %s", rec.job.job_id, e)
+        self._checkpoint()
 
-    def _make_job(self, rnd: int, pool_indices: list[int], kind_all: ItemKind = ItemKind.EXPERIMENTAL) -> Job:
-        items: list[JobItem] = []
+    def _alloc_batch_seq(self) -> int:
+        seq = self.state.next_batch_seq
+        self.state.next_batch_seq += 1
+        return seq
+
+    def _make_job(
+        self,
+        batch_seq: int,
+        pool_indices: list[int],
+        *,
+        acquisition: str,
+        kind_all: ItemKind = ItemKind.EXPERIMENTAL,
+    ) -> Job:
+        job_id = f"{self.state.campaign_id}-b{batch_seq}-{uuid.uuid4().hex[:8]}"
         if self.use_plate_layout:
-            items = self._plate_items(rnd, pool_indices)
+            items = self._plate_items(job_id, batch_seq, pool_indices)
         else:
-            for i, gidx in enumerate(pool_indices):
-                items.append(
-                    JobItem(
-                        item_id=f"r{rnd}-i{i}",
-                        smiles=self.library.smis[gidx],
-                        pool_idx=gidx,
-                        kind=kind_all,
-                        compound_id=f"CMP{gidx:07d}",
-                    )
+            items = [
+                JobItem(
+                    item_id=f"{job_id}:i{i}",
+                    smiles=self.library.smis[gidx],
+                    pool_idx=gidx,
+                    kind=kind_all,
+                    compound_id=f"CMP{gidx:07d}",
                 )
-        job_id = f"{self.state.campaign_id}-r{rnd}-{uuid.uuid4().hex[:8]}"
+                for i, gidx in enumerate(pool_indices)
+            ]
         return Job(
             job_id=job_id,
             campaign_id=self.state.campaign_id,
-            round=rnd,
+            round=batch_seq,  # unique analytical batch id (not completion counter)
             items=items,
             executor_kind=self.executor.kind,
             idempotency_key=job_id,
+            meta={"acquisition": acquisition, "batch_seq": batch_seq},
         )
 
-    def _plate_items(self, rnd: int, exp_indices: list[int]) -> list[JobItem]:
+    def _plate_items(self, job_id: str, batch_seq: int, exp_indices: list[int]) -> list[JobItem]:
         self.plate.validate()
         alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
         if self.plate.rows > len(alphabet):
@@ -271,7 +304,7 @@ class CampaignManager:
             exp_wells.append(well)
             items.append(
                 JobItem(
-                    item_id=f"r{rnd}-{well}",
+                    item_id=f"{job_id}:{well}",
                     well_id=well,
                     smiles=self.library.smis[gidx],
                     pool_idx=gidx,
@@ -283,26 +316,38 @@ class CampaignManager:
             well = wid()
             items.append(
                 JobItem(
-                    item_id=f"r{rnd}-{well}", well_id=well,
-                    smiles=self.library.smis[gidx], pool_idx=gidx,
-                    kind=ItemKind.POSITIVE, compound_id=f"CMP{gidx:07d}",
+                    item_id=f"{job_id}:{well}",
+                    well_id=well,
+                    smiles=self.library.smis[gidx],
+                    pool_idx=gidx,
+                    kind=ItemKind.POSITIVE,
+                    compound_id=f"CMP{gidx:07d}",
                 )
             )
         for gidx in self.state.negative_idx[: self.plate.n_negative]:
             well = wid()
             items.append(
                 JobItem(
-                    item_id=f"r{rnd}-{well}", well_id=well,
-                    smiles=self.library.smis[gidx], pool_idx=gidx,
-                    kind=ItemKind.NEGATIVE, compound_id=f"CMP{gidx:07d}",
+                    item_id=f"{job_id}:{well}",
+                    well_id=well,
+                    smiles=self.library.smis[gidx],
+                    pool_idx=gidx,
+                    kind=ItemKind.NEGATIVE,
+                    compound_id=f"CMP{gidx:07d}",
                 )
             )
         for _ in range(self.plate.n_blank):
             well = wid()
             items.append(
-                JobItem(item_id=f"r{rnd}-{well}", well_id=well, smiles="", pool_idx=-1, kind=ItemKind.BLANK)
+                JobItem(
+                    item_id=f"{job_id}:{well}",
+                    well_id=well,
+                    smiles="",
+                    pool_idx=-1,
+                    kind=ItemKind.BLANK,
+                )
             )
-        rng = np.random.default_rng(self.state.seed * 1000 + rnd)
+        rng = np.random.default_rng(self.state.seed * 1000 + batch_seq)
         if exp_indices and self.plate.n_replicate > 0:
             n_rep = min(self.plate.n_replicate, len(exp_wells))
             picks = rng.choice(len(exp_wells), size=n_rep, replace=False)
@@ -311,65 +356,135 @@ class CampaignManager:
                 well = wid()
                 items.append(
                     JobItem(
-                        item_id=f"r{rnd}-{well}", well_id=well,
-                        smiles=self.library.smis[gidx], pool_idx=gidx,
-                        kind=ItemKind.REPLICATE, compound_id=f"CMP{gidx:07d}",
+                        item_id=f"{job_id}:{well}",
+                        well_id=well,
+                        smiles=self.library.smis[gidx],
+                        pool_idx=gidx,
+                        kind=ItemKind.REPLICATE,
+                        compound_id=f"CMP{gidx:07d}",
                         replicate_of=exp_wells[j],
                     )
                 )
         return items
 
-    def _submit_batch(self, rnd: int, idxs: list[int], acquisition: str) -> str:
-        job = self._make_job(rnd, idxs)
+    def _submit_batch(self, idxs: list[int], acquisition: str) -> str:
+        """Two-phase durable submit: PREPARE+checkpoint → remote → SUBMITTED+checkpoint."""
+        batch_seq = self._alloc_batch_seq()
+        job = self._make_job(batch_seq, idxs, acquisition=acquisition)
         exp_idxs = [
             it.pool_idx
             for it in job.items
             if it.kind is ItemKind.EXPERIMENTAL and it.pool_idx >= 0
         ]
+
         self.cand.mark_selected(exp_idxs, job.job_id)
-        remote_id = self.executor.submit(job)
-        self.cand.mark_submitted(exp_idxs, remote_id)
         rec = JobRecord(
             job=job,
-            remote_job_id=remote_id,
-            status=JobLifecycle.SUBMITTED,
+            remote_job_id="",
+            status=JobLifecycle.PREPARED,
             submitted_at=time.time(),
+            message=f"prepared acquisition={acquisition}",
         )
         self.jobs.put(rec)
+        self._checkpoint()  # durable before remote call
+
+        try:
+            remote_id = self.executor.submit(job)
+        except Exception as e:
+            rec.status = JobLifecycle.FAILED
+            rec.message = f"remote submit failed: {e}"
+            self.cand.release(exp_idxs, job_id=job.job_id)
+            self._checkpoint()
+            raise
+
+        rec.remote_job_id = remote_id
+        rec.status = JobLifecycle.SUBMITTED
+        self.cand.mark_submitted(exp_idxs, job.job_id)
+        self._checkpoint()
         log.info(
-            "Submitted job %s remote=%s n_exp=%d acquisition=%s",
+            "Submitted job %s remote=%s batch_seq=%d n_exp=%d acquisition=%s",
             job.job_id,
             remote_id,
+            batch_seq,
             len(exp_idxs),
             acquisition,
         )
         return remote_id
 
-    def _poll_open(self) -> tuple[list[Observation], list[JobRecord]]:
-        """Poll open jobs; return newly seen observations and newly completed jobs."""
-        newly: list[Observation] = []
+    def _poll_open(self) -> tuple[dict[str, list[Observation]], list[JobRecord]]:
+        """Poll open jobs; return newly seen observations keyed by local job_id."""
+        newly_by_job: dict[str, list[Observation]] = {}
         completed: list[JobRecord] = []
+
         for rec in list(self.jobs.open_jobs()):
+            if rec.status is JobLifecycle.PREPARED or not rec.remote_job_id:
+                try:
+                    remote = self.executor.submit(rec.job)
+                    rec.remote_job_id = remote
+                    rec.status = JobLifecycle.SUBMITTED
+                    self.cand.mark_submitted(self._experimental_idxs(rec.job), rec.job.job_id)
+                    self._checkpoint()
+                except Exception as e:
+                    rec.status = JobLifecycle.FAILED
+                    rec.message = f"deferred submit failed: {e}"
+                    self.cand.release(self._experimental_idxs(rec.job), job_id=rec.job.job_id)
+                continue
+
             try:
                 status = self.executor.poll(rec.remote_job_id)
-            except Exception as e:
-                log.error("Poll failed for %s: %s — attempting re-submit", rec.job.job_id, e)
+                rec.poll_fail_count = 0
+            except JobNotFound as e:
+                if rec.retry_count >= MAX_RESUBMIT:
+                    rec.status = JobLifecycle.FAILED
+                    rec.message = f"JobNotFound max resubmit: {e}"
+                    self.cand.release(self._experimental_idxs(rec.job), job_id=rec.job.job_id)
+                    continue
                 try:
                     jid = self.executor.submit(rec.job)
                     rec.remote_job_id = jid
                     rec.retry_count += 1
+                    rec.message = "re-submit after JobNotFound"
                     status = self.executor.poll(jid)
                 except Exception as e2:
                     rec.status = JobLifecycle.FAILED
                     rec.message = str(e2)
+                    self.cand.release(self._experimental_idxs(rec.job), job_id=rec.job.job_id)
                     continue
+            except Exception as e:
+                rec.poll_fail_count += 1
+                rec.message = f"poll error ({rec.poll_fail_count}): {e}"
+                log.warning("Poll failed for %s (no resubmit): %s", rec.job.job_id, e)
+                if rec.poll_fail_count >= MAX_POLL_FAILS:
+                    rec.status = JobLifecycle.FAILED
+                    rec.message = f"max poll failures: {e}"
+                    self.cand.release(self._experimental_idxs(rec.job), job_id=rec.job.job_id)
+                continue
+
             rec.last_poll_at = time.time()
             rec.status = JobLifecycle.RUNNING if not status.done else JobLifecycle.DONE
+
+            running_idxs = [
+                o.pool_idx
+                for o in status.observations
+                if o.state is WellState.RUNNING and o.pool_idx >= 0
+            ]
+            if running_idxs:
+                self.cand.mark_running(running_idxs)
+            # Also mark submitted experimental items as RUNNING once job is active
+            if not status.done:
+                self.cand.mark_running(
+                    [
+                        it.pool_idx
+                        for it in rec.job.items
+                        if it.kind is ItemKind.EXPERIMENTAL and it.pool_idx >= 0
+                    ]
+                )
+
+            job_new: list[Observation] = []
             for o in status.observations:
                 key = o.item_id or f"{o.pool_idx}:{o.state.value}"
                 if key in rec.seen_item_ids:
                     continue
-                # Only ingest terminal-ish or usable progressive results
                 if o.state in (
                     WellState.COMPLETED,
                     WellState.FAILED,
@@ -377,10 +492,13 @@ class CampaignManager:
                     WellState.CANCELLED,
                 ) or o.usable:
                     rec.seen_item_ids.add(key)
-                    newly.append(o)
+                    job_new.append(o)
+            if job_new:
+                newly_by_job[rec.job.job_id] = job_new
             if status.done:
                 completed.append(rec)
-        return newly, completed
+
+        return newly_by_job, completed
 
     def _ingest(self, observations: list[Observation]) -> int:
         n_train = self.store.add_many(observations)
@@ -388,17 +506,20 @@ class CampaignManager:
         return n_train
 
     def _acquisition_ref_point(self, labeled_Y: np.ndarray) -> np.ndarray:
-        """Ref point from observed labels only — never from hidden oracle."""
         if labeled_Y.size == 0:
             return np.zeros(self.n_obj)
         return make_ref_point(labeled_Y)
 
+    def _is_acquisition_job(self, rec: JobRecord) -> bool:
+        return rec.job.meta.get("acquisition", "") != "init"
+
     def _maybe_submit(self) -> bool:
-        if len(self.jobs.open_jobs()) >= self.max_active_jobs:
+        open_jobs = self.jobs.open_jobs()
+        if len(open_jobs) >= self.max_active_jobs:
             return False
         if len(self.store) == 0:
             return False
-        inflight_acq = sum(1 for r in self.jobs.open_jobs() if r.job.round > 0)
+        inflight_acq = sum(1 for r in open_jobs if self._is_acquisition_job(r))
         if self._target_round is not None and self.state.round + inflight_acq >= self._target_round:
             return False
         avail = self.cand.available_indices()
@@ -409,21 +530,19 @@ class CampaignManager:
         self.model.fit(X, Y)
         means, stds = self.model.predict(self.library.X[avail])
 
-        feas = self.constraints.feasible_mask(
-            len(avail),
-            pool_global_idx=avail,
-        )
+        feas = self.constraints.feasible_mask(len(avail), pool_global_idx=avail)
         feas_local = np.where(feas)[0]
         if len(feas_local) == 0:
             feas_local = np.arange(len(avail))
 
         k = self.plate.n_experimental if self.use_plate_layout else self.batch_size
-        # free capacity in compounds: allow filling remaining active-job slots
-        free_jobs = self.max_active_jobs - len(self.jobs.open_jobs())
+        free_jobs = self.max_active_jobs - len(open_jobs)
         k = min(k, len(feas_local), max(1, free_jobs * k))
 
         ref = self._acquisition_ref_point(Y)
-        rng = np.random.default_rng(self.state.seed * 1000 + self.state.round + 1 + len(self.jobs))
+        rng = np.random.default_rng(
+            self.state.seed * 1000 + self.state.next_batch_seq + len(self.jobs)
+        )
         sel = self.acquisition.select(
             avail[feas_local],
             means[feas_local],
@@ -443,8 +562,7 @@ class CampaignManager:
             )
             chosen = [int(cand[i]) for i in div_local]
 
-        rnd = self.state.round + 1
-        self._submit_batch(rnd, chosen, acquisition=self.acquisition.name)
+        self._submit_batch(chosen, acquisition=self.acquisition.name)
         return True
 
     def _metrics_dict(self) -> dict[str, float]:
@@ -457,6 +575,15 @@ class CampaignManager:
             "mean_activity": rep.mean_activity,
         }
 
+    def _job_history_stats(self, rec: JobRecord) -> dict[str, int]:
+        item_ids = {it.item_id for it in rec.job.items}
+        obs = [o for o in self.store.history if o.item_id in item_ids]
+        return {
+            "completed": sum(1 for o in obs if o.usable),
+            "failed": sum(1 for o in obs if o.state is WellState.FAILED),
+            "qc_rejected": sum(1 for o in obs if o.state is WellState.QC_REJECTED),
+        }
+
     def _checkpoint(self) -> None:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.store.save(self.store_path)
@@ -466,48 +593,53 @@ class CampaignManager:
 
     def step(self) -> dict[str, Any]:
         """One non-blocking orchestration tick: poll → ingest → maybe submit."""
-        newly, completed = self._poll_open()
-        n_new_train = self._ingest(newly) if newly else 0
+        newly_by_job, completed = self._poll_open()
+        all_new = [o for obs in newly_by_job.values() for o in obs]
+        n_new_train = self._ingest(all_new) if all_new else 0
 
         for rec in completed:
-            if not self.state.init_done:
+            stats = self._job_history_stats(rec)
+            m = self._metrics_dict()
+            acq = rec.job.meta.get("acquisition", "")
+            if acq == "init" and not self.state.init_done:
                 self.state.init_done = True
-                m = self._metrics_dict()
                 self.state.history.append(
                     {
                         "round": 0,
+                        "batch_seq": rec.job.meta.get("batch_seq", rec.job.round),
                         "n_labeled": len(self.store),
                         "hv_frac": m.get("hv_frac", float("nan")),
                         "pareto_recall": m.get("pareto_recall", float("nan")),
                         "submitted": len(rec.job.items),
-                        "completed": sum(1 for o in newly if o.usable),
-                        "failed": sum(1 for o in newly if o.state is WellState.FAILED),
-                        "qc_rejected": sum(1 for o in newly if o.state is WellState.QC_REJECTED),
+                        "completed": stats["completed"],
+                        "failed": stats["failed"],
+                        "qc_rejected": stats["qc_rejected"],
                         "job_id": rec.job.job_id,
                         "acquisition": "init",
                     }
                 )
-            elif rec.job.round > 0:
-                self.state.round = max(self.state.round, rec.job.round)
-                m = self._metrics_dict()
+            elif acq != "init":
+                self.state.round += 1
                 self.state.history.append(
                     {
-                        "round": rec.job.round,
+                        "round": self.state.round,
+                        "batch_seq": rec.job.meta.get("batch_seq", rec.job.round),
                         "n_labeled": len(self.store),
                         "hv_frac": m.get("hv_frac", float("nan")),
                         "pareto_recall": m.get("pareto_recall", float("nan")),
                         "submitted": len(rec.job.items),
-                        "completed": n_new_train,
-                        "failed": sum(1 for o in newly if o.state is WellState.FAILED),
-                        "qc_rejected": sum(1 for o in newly if o.state is WellState.QC_REJECTED),
+                        "completed": stats["completed"],
+                        "failed": stats["failed"],
+                        "qc_rejected": stats["qc_rejected"],
                         "job_id": rec.job.job_id,
-                        "acquisition": self.acquisition.name,
+                        "acquisition": acq or self.acquisition.name,
                     }
                 )
                 log.info(
-                    "[%s] r%02d n=%d hv_frac=%s open=%d",
+                    "[%s] r%02d batch=%s n=%d hv_frac=%s open=%d",
                     self.state.campaign_id,
                     self.state.round,
+                    rec.job.meta.get("batch_seq"),
                     len(self.store),
                     m.get("hv_frac"),
                     len(self.jobs.open_jobs()),
@@ -523,16 +655,18 @@ class CampaignManager:
             "init_done": self.state.init_done,
             "n_labeled": len(self.store),
             "n_new_train": n_new_train,
-            "n_new_obs": len(newly),
+            "n_new_obs": len(all_new),
             "open_jobs": len(self.jobs.open_jobs()),
             "submitted": submitted,
+            "next_batch_seq": self.state.next_batch_seq,
             **self._metrics_dict(),
         }
 
     def run(self, n_rounds: int, *, max_steps: int | None = None) -> list[dict]:
-        """Drive ``step`` until ``n_rounds`` acquisition rounds complete after init."""
+        """Drive ``step`` until ``n_rounds`` acquisition batches complete after init."""
         self._target_round = self.state.round + n_rounds
         limit = max_steps if max_steps is not None else max(2000, (n_rounds + 3) * self.max_polls * 10)
+        info: dict[str, Any] = {}
         for _ in range(limit):
             info = self.step()
             finished = (
@@ -549,5 +683,5 @@ class CampaignManager:
                 return self.state.history
         raise TimeoutError(
             f"Campaign exceeded max_steps={limit} "
-            f"(round={self.state.round}, open={info['open_jobs']}, labeled={info['n_labeled']})"
+            f"(round={self.state.round}, open={info.get('open_jobs')}, labeled={info.get('n_labeled')})"
         )

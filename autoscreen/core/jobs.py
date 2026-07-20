@@ -1,17 +1,18 @@
 """Persistent job ledger for async submit/poll and crash recovery."""
 from __future__ import annotations
 
-import json
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from autoscreen.core.persist import atomic_write_json
 from autoscreen.core.types import ItemKind, Job, JobItem, Observation, WellState
 
 
 class JobLifecycle(str, Enum):
+    PREPARED = "PREPARED"  # local durable intent; remote submit not confirmed
     QUEUED = "QUEUED"
     SUBMITTED = "SUBMITTED"
     RUNNING = "RUNNING"
@@ -23,12 +24,13 @@ class JobLifecycle(str, Enum):
 @dataclass
 class JobRecord:
     job: Job
-    remote_job_id: str
-    status: JobLifecycle = JobLifecycle.SUBMITTED
+    remote_job_id: str = ""
+    status: JobLifecycle = JobLifecycle.PREPARED
     submitted_at: float = field(default_factory=time.time)
     last_poll_at: float = 0.0
     seen_item_ids: set[str] = field(default_factory=set)
     retry_count: int = 0
+    poll_fail_count: int = 0
     message: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -40,6 +42,7 @@ class JobRecord:
             "last_poll_at": self.last_poll_at,
             "seen_item_ids": sorted(self.seen_item_ids),
             "retry_count": self.retry_count,
+            "poll_fail_count": self.poll_fail_count,
             "message": self.message,
         }
 
@@ -70,12 +73,13 @@ class JobRecord:
         )
         return cls(
             job=job,
-            remote_job_id=d["remote_job_id"],
-            status=JobLifecycle(d.get("status", "SUBMITTED")),
+            remote_job_id=d.get("remote_job_id") or "",
+            status=JobLifecycle(d.get("status", "PREPARED")),
             submitted_at=float(d.get("submitted_at", 0.0)),
             last_poll_at=float(d.get("last_poll_at", 0.0)),
             seen_item_ids=set(d.get("seen_item_ids") or []),
             retry_count=int(d.get("retry_count", 0)),
+            poll_fail_count=int(d.get("poll_fail_count", 0)),
             message=d.get("message", ""),
         )
 
@@ -97,25 +101,29 @@ class JobStore:
         return [
             r
             for r in self._by_id.values()
-            if r.status in (JobLifecycle.QUEUED, JobLifecycle.SUBMITTED, JobLifecycle.RUNNING)
+            if r.status
+            in (
+                JobLifecycle.PREPARED,
+                JobLifecycle.QUEUED,
+                JobLifecycle.SUBMITTED,
+                JobLifecycle.RUNNING,
+            )
         ]
 
     def all(self) -> list[JobRecord]:
         return list(self._by_id.values())
 
     def save(self, path: str | Path) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"jobs": [r.to_dict() for r in self._by_id.values()]}
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        atomic_write_json(path, {"jobs": [r.to_dict() for r in self._by_id.values()]})
 
     @classmethod
     def load(cls, path: str | Path) -> "JobStore":
+        import json
+
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         store = cls()
         for d in data.get("jobs", []):
-            rec = JobRecord.from_dict(d)
-            store.put(rec)
+            store.put(JobRecord.from_dict(d))
         return store
 
 

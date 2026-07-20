@@ -72,8 +72,9 @@ docker compose run --rm autoscreen python -m autoscreen.cli run --config configs
 
 - **昂贵目标**（如 `activity`）由 Executor 返回；**静态属性**（QED、SA）挂在 `CandidateLibrary`，用于约束，不进 surrogate 目标。
 - **隐藏标签**只存在于 `ReplayExecutor` 的 oracle 与可选的 `BenchmarkEvaluator`；Campaign 不得持有 `Y_hidden`。
-- **Campaign** 以 `step()` 轮询：可多 `active jobs`、部分结果入库、pending 分子不可再选；checkpoint 含 `jobs.json` / `candidate_state.json` / 完整观测历史。
-- VinaExecutor 仍是串行对接原型，不是异步 VS 的完备证明。
+- **Campaign** 以 `step()` 轮询：`next_batch_seq` 保证全局唯一 `job_id`/`item_id`；提交采用 PREPARED→远程→SUBMITTED 两阶段持久化；按 Job 分组统计 history。
+- **VinaExecutor** 按分子异步对接（线程池），`poll` 非阻塞并返回部分结果；支持单分子超时与结果缓存。
+- 孔板对照必须由配置显式提供，不会从 QED/隐藏标签推断。
 
 ## 叙事边界
 

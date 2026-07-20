@@ -7,6 +7,7 @@ from pathlib import Path
 
 import numpy as np
 
+from autoscreen.core.persist import atomic_write_json
 from autoscreen.core.types import ItemKind, Observation, WellState
 
 
@@ -84,6 +85,23 @@ class CandidateStateStore:
             ):
                 self._phase[i] = CandidatePhase.RUNNING
 
+    def release(self, idxs: list[int], *, job_id: str | None = None) -> None:
+        """Return in-flight candidates to AVAILABLE (transient job failure)."""
+        for i in idxs:
+            i = int(i)
+            if i < 0 or i >= self.n:
+                continue
+            if self._phase[i] not in (
+                CandidatePhase.SELECTED,
+                CandidatePhase.SUBMITTED,
+                CandidatePhase.RUNNING,
+            ):
+                continue
+            if job_id is not None and self._job_id[i] not in (None, job_id):
+                continue
+            self._phase[i] = CandidatePhase.AVAILABLE
+            self._job_id[i] = None
+
     def apply_observation(self, obs: Observation) -> None:
         i = int(obs.pool_idx)
         if i < 0 or i >= self.n:
@@ -125,14 +143,12 @@ class CandidateStateStore:
         )
 
     def save(self, path: str | Path) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "n": self.n,
             "phase": [p.value for p in self._phase],
             "job_id": self._job_id,
         }
-        path.write_text(json.dumps(payload), encoding="utf-8")
+        atomic_write_json(path, payload)
 
     @classmethod
     def load(cls, path: str | Path) -> "CandidateStateStore":

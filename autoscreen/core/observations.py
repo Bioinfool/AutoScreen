@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 
 from autoscreen.core.jobs import observation_from_dict, observation_to_dict
+from autoscreen.core.persist import atomic_write_json
 from autoscreen.core.types import Observation
 
 
@@ -69,14 +70,12 @@ class ObservationStore:
         return m
 
     def save(self, path: str | Path) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
             "labeled": [observation_to_dict(o) for o in self._by_pool.values()],
             "history": [observation_to_dict(o) for o in self._history],
             "seen_keys": sorted(self._seen_keys),
         }
-        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        atomic_write_json(path, payload)
 
     @classmethod
     def load(cls, path: str | Path) -> "ObservationStore":
