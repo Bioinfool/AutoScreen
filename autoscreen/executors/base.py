@@ -29,4 +29,9 @@ class Executor(ABC):
         while not status.done and polls < max_polls:
             polls += 1
             status = self.poll(job_id)
+        if not status.done:
+            raise TimeoutError(
+                f"Job {job_id} not done after {max_polls} polls "
+                f"(n_pending={status.n_pending})"
+            )
         return status

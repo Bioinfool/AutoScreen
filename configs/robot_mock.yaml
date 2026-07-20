@@ -25,9 +25,15 @@ plate:
 
 robot:
   base_url: http://127.0.0.1:8080
+  # Must match data.moo_csv; export on the mock service:
+  #   AUTOSCREEN_TRUTH_MOO=data/Enamine10k_moo.csv.gz
+  truth_moo: data/Enamine10k_moo.csv.gz
   timeout_s: 30.0
   poll_interval_s: 0.2
   max_polls: 100
+
+constraints:
+  stock_out_rate: 0.05
 
 surrogate:
   n_estimators: 100

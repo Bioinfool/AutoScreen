@@ -96,7 +96,12 @@ class PlateSimulator:
             w.qc_passed = False
             w.message = "assay/hardware failure"
             return
-        base = list(self.truth.get(w.pool_idx, [0.0, 0.5, -3.0]))
+        if w.pool_idx not in self.truth:
+            w.state = "FAILED"
+            w.qc_passed = False
+            w.message = f"missing truth for pool_idx={w.pool_idx}"
+            return
+        base = list(self.truth[w.pool_idx])
         base[0] = float(base[0]) + float(self.rng.normal(0.0, self.activity_noise * self._act_scale))
         qc = self.rng.random() >= self.qc_reject_rate
         w.values = base

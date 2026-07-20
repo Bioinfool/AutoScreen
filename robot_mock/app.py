@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import gzip
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException
@@ -14,12 +15,21 @@ from robot_mock.simulator import PlateSimulator
 app = FastAPI(title="AutoScreen robot_mock", version="0.2.0")
 
 
-def _load_truth_moo_order() -> dict[int, list[float]]:
-    """Load maximize-convention labels in Enamine10k_moo row order."""
+def _default_truth_path() -> Path:
     root = Path(__file__).resolve().parents[1]
-    moo = root / "data" / "Enamine10k_moo.csv.gz"
+    return root / "data" / "Enamine10k_moo.csv.gz"
+
+
+def load_truth_moo(path: Path | None = None) -> dict[int, list[float]]:
+    """Load maximize-convention labels in MOO CSV row order (= campaign pool_idx)."""
+    moo = path or Path(os.environ.get("AUTOSCREEN_TRUTH_MOO", str(_default_truth_path())))
+    if not moo.is_absolute():
+        moo = Path(__file__).resolve().parents[1] / moo
     if not moo.exists():
-        return {}
+        raise FileNotFoundError(
+            f"robot_mock truth file not found: {moo}. "
+            "Set AUTOSCREEN_TRUTH_MOO to the same moo_csv used by the campaign."
+        )
     truth: dict[int, list[float]] = {}
     with gzip.open(moo, "rt") as fid:
         reader = csv.reader(fid)
@@ -30,7 +40,7 @@ def _load_truth_moo_order() -> dict[int, list[float]]:
     return truth
 
 
-SIM = PlateSimulator(truth=_load_truth_moo_order(), seed=0)
+SIM = PlateSimulator(truth=load_truth_moo(), seed=0)
 
 
 class PlateRequest(BaseModel):
@@ -43,7 +53,12 @@ class PlateRequest(BaseModel):
 
 @app.get("/v1/health")
 def health():
-    return {"status": "ok", "protocol_version": PROTOCOL_VERSION, "n_jobs": len(SIM.jobs)}
+    return {
+        "status": "ok",
+        "protocol_version": PROTOCOL_VERSION,
+        "n_jobs": len(SIM.jobs),
+        "n_truth": len(SIM.truth),
+    }
 
 
 @app.post("/v1/plates")
