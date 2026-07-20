@@ -4,10 +4,13 @@
 *.pyc
 *.pyo
 runs/
-results/_*.svg
-molpal/libraries/*.h5
+results/
+data/*.h5
 *.log
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+.pytest_cache/
+*.egg-info/
+autoscreen_legacy/

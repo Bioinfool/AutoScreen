@@ -1,17 +1,19 @@
-from autoscreen.core.library import load_candidate_library
-from autoscreen.core.observations import ObservationStore
-from autoscreen.core.model import MultiOutputRFSurrogate
-from autoscreen.core.types import Observation, WellState, ItemKind
-import numpy as np
 from pathlib import Path
+
+import numpy as np
+
+from autoscreen.core.library import load_candidate_library
+from autoscreen.core.model import MultiOutputRFSurrogate
+from autoscreen.core.observations import ObservationStore
+from autoscreen.core.types import ItemKind, Observation, WellState
 
 
 def test_library_observations_surrogate(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
     lib = load_candidate_library(
-        root / "molpal/libraries/Enamine10k.csv.gz",
-        root / "molpal/libraries/Enamine10k.h5",
-        root / "molpal/data/Enamine10k_moo.csv.gz",
+        root / "data/Enamine10k.csv.gz",
+        root / "data/Enamine10k.h5",
+        root / "data/Enamine10k_moo.csv.gz",
     )
     assert lib.n > 1000
     assert lib.Y_hidden is not None

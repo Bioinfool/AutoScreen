@@ -14,24 +14,16 @@ build/
 .venv/
 venv/
 
-# MolPAL run outputs (regenerate on each machine)
-molpal/smoke_10k/
-molpal/molpal_10k/
-molpal/molpal_*/
-molpal/lightning_logs/
-molpal/chkpts/
+# Fingerprints: regenerate via scripts/prep_fps_serial.py
+data/*.h5
 
-# Fingerprints: regenerate via scripts/prep_fps_serial.py (~22MB)
-molpal/libraries/*.h5
-
-# AutoScreen async campaign checkpoints / transient run dirs
+# Campaign checkpoints / transient run dirs
 runs/
-autoscreen_legacy/
+results/
 
-# pytest / coverage
-.coverage
-htmlcov/
-.tox/
+# Legacy / local noise
+autoscreen_legacy/
+results_run.log
 
 # IDE / OS
 .vscode/
@@ -42,5 +34,7 @@ Thumbs.db
 # Logs
 *.log
 
-# Ray temp
-/tmp/ray/
+# pytest / coverage
+.coverage
+htmlcov/
+.tox/

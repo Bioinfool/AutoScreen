@@ -109,9 +109,9 @@ class ASGIRobotExecutor(Executor):
 def test_robot_campaign_http(tmp_path, robot_client):
     root = Path(__file__).resolve().parents[1]
     lib = load_candidate_library(
-        root / "molpal/libraries/Enamine10k.csv.gz",
-        root / "molpal/libraries/Enamine10k.h5",
-        root / "molpal/data/Enamine10k_moo.csv.gz",
+        root / "data/Enamine10k.csv.gz",
+        root / "data/Enamine10k.h5",
+        root / "data/Enamine10k_moo.csv.gz",
     )
     plate = PlateConfig(n_experimental=20, n_positive=2, n_negative=2, n_blank=2, n_replicate=2)
     ex = ASGIRobotExecutor(robot_client)

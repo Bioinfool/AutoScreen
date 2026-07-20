@@ -1,4 +1,4 @@
-"""Smoke test for package importability (phase 0)."""
+"""Smoke test for package importability."""
 
 
 def test_version_and_types_import():

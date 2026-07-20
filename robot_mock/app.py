@@ -17,7 +17,7 @@ app = FastAPI(title="AutoScreen robot_mock", version="0.2.0")
 def _load_truth_moo_order() -> dict[int, list[float]]:
     """Load maximize-convention labels in Enamine10k_moo row order."""
     root = Path(__file__).resolve().parents[1]
-    moo = root / "molpal" / "data" / "Enamine10k_moo.csv.gz"
+    moo = root / "data" / "Enamine10k_moo.csv.gz"
     if not moo.exists():
         return {}
     truth: dict[int, list[float]] = {}

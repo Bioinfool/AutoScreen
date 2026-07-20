@@ -1,12 +1,12 @@
-"""docs: how to run AutoScreen with AutoDock Vina.
+# 使用 AutoDock Vina 运行 AutoScreen
 
-## Prerequisites
+## 依赖
 
-1. Install [AutoDock Vina](https://github.com/ccsb-scripps/AutoDock-Vina) and ensure `vina` is on PATH.
-2. Install OpenBabel (`obabel`) for ligand PDB → PDBQT conversion.
-3. Prepare a receptor `.pdbqt` file and set the docking box in `configs/vina_demo.yaml`.
+1. 安装 [AutoDock Vina](https://github.com/ccsb-scripps/AutoDock-Vina)，确保 `vina` 在 PATH 中。
+2. 安装 OpenBabel（`obabel`）用于配体 PDB → PDBQT 转换。
+3. 准备受体 `.pdbqt`，并在 `configs/vina_demo.yaml` 中设置对接盒参数。
 
-## Config
+## 配置示例
 
 ```yaml
 executor: vina
@@ -17,12 +17,11 @@ vina:
   vina_bin: vina
 ```
 
-## Run
+## 运行
 
 ```bash
-autoscreen run --config configs/vina_demo.yaml
+python -m autoscreen.cli run --config configs/vina_demo.yaml
 ```
 
-If `receptor` is null or `vina` is missing, the executor raises a clear `RuntimeError`.
-Offline Replay campaigns do not need Vina.
-"""
+若未配置 `receptor` 或找不到 `vina`，`VinaExecutor` 会抛出明确的 `RuntimeError`。  
+离线 Replay campaign 不需要安装 Vina。

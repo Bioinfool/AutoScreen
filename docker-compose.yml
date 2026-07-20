@@ -29,5 +29,4 @@ services:
     ports:
       - "8080:8080"
     volumes:
-      - ./molpal/data:/workspace/molpal/data:ro
-      - ./molpal/libraries:/workspace/molpal/libraries:ro
+      - ./data:/workspace/data:ro

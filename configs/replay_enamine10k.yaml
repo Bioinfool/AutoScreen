@@ -3,9 +3,9 @@ seed: 0
 executor: replay
 
 data:
-  library_csv: molpal/libraries/Enamine10k.csv.gz
-  fps_h5: molpal/libraries/Enamine10k.h5
-  moo_csv: molpal/data/Enamine10k_moo.csv.gz
+  library_csv: data/Enamine10k.csv.gz
+  fps_h5: data/Enamine10k.h5
+  moo_csv: data/Enamine10k_moo.csv.gz
 
 init_frac: 0.01
 batch_size: 100

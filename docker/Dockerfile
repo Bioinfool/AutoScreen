@@ -14,9 +14,9 @@ COPY configs /workspace/configs
 COPY pyproject.toml /workspace/pyproject.toml
 COPY README.md /workspace/README.md
 
-COPY molpal/libraries/Enamine10k.csv.gz /workspace/molpal/libraries/Enamine10k.csv.gz
-COPY molpal/data/Enamine10k_scores.csv.gz /workspace/molpal/data/Enamine10k_scores.csv.gz
-COPY molpal/data/Enamine10k_moo.csv.gz /workspace/molpal/data/Enamine10k_moo.csv.gz
+COPY data/Enamine10k.csv.gz /workspace/data/Enamine10k.csv.gz
+COPY data/Enamine10k_scores.csv.gz /workspace/data/Enamine10k_scores.csv.gz
+COPY data/Enamine10k_moo.csv.gz /workspace/data/Enamine10k_moo.csv.gz
 
 RUN pip install --no-cache-dir -e ".[robot,dev]" \
  && python /workspace/scripts/prep_fps_serial.py

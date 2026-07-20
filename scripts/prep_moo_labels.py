@@ -1,13 +1,11 @@
 """Build a multi-objective label table for Enamine10k.
 
 Objectives (raw values; direction handled downstream):
-  - dock : docking score from MolPAL's precomputed table (lower = better)
+  - dock : docking score from the precomputed score table (lower = better)
   - qed  : QED drug-likeness (higher = better)
   - sa   : synthetic accessibility (lower = easier to make)
 
 Output: data/Enamine10k_moo.csv.gz  with columns [smiles, dock, qed, sa]
-Only molecules present in both the library and the docking-score table are kept,
-so every row has a real activity label (no imputation).
 """
 import csv
 import gzip
@@ -37,8 +35,8 @@ def load_scores(path: Path) -> dict[str, float]:
 
 
 def main() -> None:
-    root = Path(__file__).resolve().parents[1] / "molpal"
-    library = root / "libraries" / "Enamine10k.csv.gz"
+    root = Path(__file__).resolve().parents[1]
+    library = root / "data" / "Enamine10k.csv.gz"
     scores_path = root / "data" / "Enamine10k_scores.csv.gz"
     out_path = root / "data" / "Enamine10k_moo.csv.gz"
 

@@ -1,8 +1,6 @@
-"""Precompute the Enamine10k fingerprint HDF5 (serial, no Ray/MolPAL deps).
+"""Precompute Enamine10k fingerprint HDF5 (serial, no Ray).
 
-Reproduces MolPAL's default "pair" fingerprint (hashed atom-pair, radius 2,
-2048 bits) directly via RDKit, so the AutoScreen image stays lean and this runs
-on Windows without Ray's flaky parallel featurization.
+Uses hashed atom-pair fingerprints (radius 2, 2048 bits).
 """
 import csv
 import gzip
@@ -39,9 +37,9 @@ def load_smis(library: Path) -> list[str]:
 
 
 def main() -> None:
-    root = Path(__file__).resolve().parents[1] / "molpal"
-    library = root / "libraries" / "Enamine10k.csv.gz"
-    output = root / "libraries" / "Enamine10k.h5"
+    root = Path(__file__).resolve().parents[1]
+    library = root / "data" / "Enamine10k.csv.gz"
+    output = root / "data" / "Enamine10k.h5"
 
     smis = load_smis(library)
     size = len(smis)

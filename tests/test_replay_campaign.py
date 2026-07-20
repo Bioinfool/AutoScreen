@@ -9,9 +9,9 @@ from autoscreen.executors.replay import ReplayExecutor
 def test_replay_campaign_two_rounds(tmp_path: Path):
     root = Path(__file__).resolve().parents[1]
     lib = load_candidate_library(
-        root / "molpal/libraries/Enamine10k.csv.gz",
-        root / "molpal/libraries/Enamine10k.h5",
-        root / "molpal/data/Enamine10k_moo.csv.gz",
+        root / "data/Enamine10k.csv.gz",
+        root / "data/Enamine10k.h5",
+        root / "data/Enamine10k_moo.csv.gz",
     )
     ex = ReplayExecutor(lib, seed=0)
     camp = CampaignManager(
@@ -30,7 +30,6 @@ def test_replay_campaign_two_rounds(tmp_path: Path):
     assert len(hist) >= 2
     assert camp.state.round == 2
     assert len(camp.store) > 50
-    # resume
     camp2 = CampaignManager(
         library=lib,
         executor=ReplayExecutor(lib, seed=0),
